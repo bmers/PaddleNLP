@@ -300,12 +300,12 @@ class InferencePredictorMixin:
             )
         else:
             self.attention_mask = paddle.zeros(
-                shape=(1, 1, config.max_length, config.max_length),
+                shape=(1, 1, config.total_max_length, config.total_max_length),
                 dtype=self.dtype,
             )
 
         self.tgt_generation_mask = paddle.ones(
-            shape=[1, 1, config.max_length, config.max_length],
+            shape=[1, 1, config.total_max_length, config.total_max_length],
             dtype=self.dtype,
         )
         self.arange_tensor_encoder = paddle.zeros(shape=(config.batch_size, 1, total_max_length), dtype=self.dtype)
@@ -429,6 +429,7 @@ class InferencePredictorMixin:
             inputs = dybatch_preprocess(
                 self.tokenizer,
                 source,
+                self.config.src_length,
                 self.config.max_length,
                 self.architectures,
                 top_p=self.config.top_p,
@@ -702,7 +703,7 @@ def create_predictor(
                 )
 
                 cache_kvs_shape = LlamaForCausalLMInferenceModel.get_cache_kvs_shape(
-                    config, predictor_args.batch_size, predictor_args.max_length
+                    config, predictor_args.batch_size, predictor_args.total_max_length
                 )
                 predictor = StaticInferencePredictor(predictor_args, cache_kvs_shape, tokenizer=tokenizer)
             elif "chatglm" in config.architectures[0].lower():

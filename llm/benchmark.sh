@@ -23,14 +23,24 @@ export FLAGS_use_autotune=1
 export FLAGS_cublaslt_exhaustive_search_times=10
 export FLAGS_cache_inference_while_scope=1
 
+model_dir=${1:-"checkpoints/llama_ptq_ckpts_smooth_all_shift_mp2"}
+src_len=${2:-300}
+dec_len=${3:-100}
 
-python predictor.py \
-    --model_name_or_path ./llama7b-inference_model_fp16 \
+total_len=`expr ${src_len} + ${dec_len}`
+
+
+python -m paddle.distributed.launch \
+    --gpus "6,7" \
+    predictor.py \
+    --model_name_or_path ./inference_model/${model_dir} \
     --dtype float16 \
-    --src_length 300 \
-    --max_length 100 \
+    --src_length ${total_len} \
+    --max_length ${dec_len} \
     --output_file "infer.json" \
     --mode "static" \
     --batch_size 1 \
     --benchmark \
+    --block_attn \
+    --block_size 64 \
     --inference_model 

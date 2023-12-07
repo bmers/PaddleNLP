@@ -24,17 +24,18 @@ export FLAGS_control_flow_use_new_executor=1
 export FLAGS_new_executor_serial_run=1
 export FLAGS_allocator_strategy=naive_best_fit
 export FLAGS_fraction_of_gpu_memory_to_use=0.92
-export CUDA_VISIBLE_DEVICES=5
 
-model_dir=${1:-"linly-ai/chinese-llama-2-7b"}
+model_dir=${1:-"checkpoints/llama_ptq_ckpts_smooth_all_shift"}
 src_len=${2:-1024}
 dec_len=${3:-1024}
-quant_type=${4:-"weight_only_int8"}
+quant_type=${4:-"a8w8"}
 # quant_type=${4:-"None"}
 
 total_len=`expr ${src_len} + ${dec_len}`
 
-python predictor.py \
+python -m paddle.distributed.launch \
+    --gpus "6, 7" \
+    predictor.py \
     --model_name_or_path ${model_dir} \
     --dtype float16 \
     --src_length ${total_len} \
@@ -43,5 +44,6 @@ python predictor.py \
     --mode "dynamic" \
     --batch_size 2 \
     --inference_model \
-    --quant_type ${quant_type} 
+    --quant_type ${quant_type}  \
+    --block_attn
 

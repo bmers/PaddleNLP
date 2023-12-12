@@ -102,9 +102,10 @@ class PredictorArgument:
     )
     block_attn: bool = field(default=False, metadata={"help": "whether use block attention"})
     block_size: int = field(default=64, metadata={"help": "the block size for cache_kvs."})
-    use_cachekv_int8: bool = field(
-        default=False,
-        metadata={"help": "If use_cachekv_int8 set as `True`, dynamic cache kv quantization will be applied"},)
+    use_cachekv_int8: str = field(
+        default="None",
+        metadata={"help": "If use_cachekv_int8 set as `dynamic`, dynamic cache kv quantization will be applied; if set as `static`, static cache kv will be applied"},)
+    
     chat_template: str = field(
         default=None,
         metadata={
@@ -708,7 +709,7 @@ class DygraphBlockInferencePredictor(BasePredictor):
         self.architectures = self.model_config.architectures[0].lower()
 
         self.dtype = config.dtype or self.model_config
-        if config.use_cachekv_int8:
+        if config.use_cachekv_int8 == "dynamic":
             self.cache_kvs = [paddle.zeros(shape, dtype="uint8") for shape in self.cache_kvs_shape]
         else:
             self.cache_kvs = [paddle.zeros(shape, dtype=self.dtype) for shape in self.cache_kvs_shape]
@@ -734,7 +735,7 @@ class DygraphBlockInferencePredictor(BasePredictor):
             pre_cache_mask[:, :, :, self.pre_cache_length:] = paddle.tril(paddle.ones(shape=[config.batch_size, 1, config.src_length, config.src_length], dtype=self.dtype))
             self.inputs["src_mask"] = (pre_cache_mask - 1) * 1e4
 
-        if config.use_cachekv_int8:
+        if config.use_cachekv_int8 == "dynamic":
             self.k_quant_scales = [
                 paddle.zeros([self.num_attention_heads], dtype="float32") for _ in range(self.num_layers)
             ]
@@ -757,7 +758,7 @@ class DygraphBlockInferencePredictor(BasePredictor):
         self.inputs["frequency_score"] = paddle.full(shape=[config.batch_size, 1], fill_value=0.0, dtype="float32")
         self.inputs["presence_score"] = paddle.full(shape=[config.batch_size, 1], fill_value=0.0, dtype="float32")
 
-        if config.use_cachekv_int8:
+        if config.use_cachekv_int8 == "dynamic":
             self.inputs["k_quant_scales"] = self.k_quant_scales
             self.inputs["v_quant_scales"] = self.v_quant_scales
             self.inputs["k_dequant_scales"] = self.k_dequant_scales
@@ -916,7 +917,13 @@ class StaticBlockInferencePredictor(BasePredictor):
             self.inputs["src_mask"] = (pre_cache_mask - 1) * 1e4
 
         self.cache_kvs = {}
-        if not config.use_cachekv_int8:
+        if config.use_cachekv_int8 == "dynamic":
+            for i in range(len(self.cache_kvs_shape) // 2):
+                self.cache_kvs["key_caches_{}".format(i)] = paddle.zeros(self.cache_kvs_shape[2 * i], dtype="uint8")
+                self.cache_kvs["value_caches_{}".format(i)] = paddle.zeros(
+                    self.cache_kvs_shape[2 * i + 1], dtype="uint8"
+                )
+        else:
             for i in range(len(self.cache_kvs_shape) // 2):
                 self.cache_kvs["key_caches_{}".format(i)] = paddle.zeros(
                     self.cache_kvs_shape[2 * i], dtype=config.dtype
@@ -924,14 +931,8 @@ class StaticBlockInferencePredictor(BasePredictor):
                 self.cache_kvs["value_caches_{}".format(i)] = paddle.zeros(
                     self.cache_kvs_shape[2 * i + 1], dtype=config.dtype
                 )
-        else:
-            for i in range(len(self.cache_kvs_shape) // 2):
-                self.cache_kvs["key_caches_{}".format(i)] = paddle.zeros(self.cache_kvs_shape[2 * i], dtype="uint8")
-                self.cache_kvs["value_caches_{}".format(i)] = paddle.zeros(
-                    self.cache_kvs_shape[2 * i + 1], dtype="uint8"
-                )
 
-        if config.use_cachekv_int8:
+        if config.use_cachekv_int8 == "dynamic":
             self.k_quant_scales = [
                 paddle.zeros([self.num_attention_heads], dtype="float32") for _ in range(self.num_layers)
             ]
@@ -1003,7 +1004,7 @@ class StaticBlockInferencePredictor(BasePredictor):
 
 
         for i in range(self.num_layers):
-            if self.config.use_cachekv_int8:
+            if self.config.use_cachekv_int8 == "dynamic":
                 self.inputs["k_quant_scales_" + str(i)] = self.k_quant_scales[i]
                 self.inputs["v_quant_scales_" + str(i)] = self.v_quant_scales[i]
                 self.inputs["k_dequant_scales_" + str(i)] = self.k_dequant_scales[i]
@@ -1319,6 +1320,7 @@ def create_predictor(
                 if predictor_args.block_attn:
                     config.block_size = predictor_args.block_size
                     config.max_seq_len = predictor_args.src_length
+                    config.use_dynamic_cachekv_quant = predictor_args.use_cachekv_int8 == "dynamic"
                     from paddlenlp.experimental.transformers import (
                         LlamaForCausalLMBlockInferenceModel as LlamaInferenceModel,
                     )

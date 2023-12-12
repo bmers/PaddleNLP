@@ -181,6 +181,10 @@ class FusedMultiTransformerConfig:
         linear_smooth_attrs=None,
         ffn2_shift_attrs=None,
         ffn2_smooth_attrs=None,
+        cache_k_scale_attrs=None,
+        cache_v_scale_attrs=None,
+        cache_k_out_scale_attrs=None,
+        cache_v_out_scale_attrs=None,
         quant_round_type=0,
         quant_max_bound=127.0,
         quant_min_bound=-127.0,
@@ -191,6 +195,7 @@ class FusedMultiTransformerConfig:
         trans_qkvw=True,
         ring_id=-1,
         kv_num_heads=-1,
+        use_dynamic_cachekv_quant=True,
     ):
         self.embed_dim = embed_dim
         self.num_heads = num_heads
@@ -232,9 +237,15 @@ class FusedMultiTransformerConfig:
         self.linear_smooth_attrs = linear_smooth_attrs
         self.ffn2_shift_attrs = ffn2_shift_attrs
         self.ffn2_smooth_attrs = ffn2_smooth_attrs
+        self.cache_k_scale_attrs = cache_k_scale_attrs
+        self.cache_v_scale_attrs = cache_v_scale_attrs
+        self.cache_k_out_scale_attrs = cache_k_out_scale_attrs
+        self.cache_v_out_scale_attrs = cache_v_out_scale_attrs
+        
         self.quant_round_type = quant_round_type
         self.quant_max_bound = quant_max_bound
         self.quant_min_bound = quant_min_bound
+        self.use_dynamic_cachekv_quant  = use_dynamic_cachekv_quant
 
         self.epsilon = epsilon
         self.residual_alpha = residual_alpha
@@ -249,6 +260,8 @@ class FusedMultiTransformerConfig:
 class FusedMultiTransformerBase(Layer):
     def __init__(self, config: FusedMultiTransformerConfig):
         super().__init__()
+        
+        self.config = config
 
         assert config.embed_dim > 0, "Expected embed_dim to be greater than 0, " "but received {}".format(
             config.embed_dim
@@ -305,6 +318,8 @@ class FusedMultiTransformerBase(Layer):
         self.ffn_ln_scales, self.ffn_ln_biases = [], []
         self.ffn1_weights, self.ffn1_biases = [], []
         self.ffn2_weights, self.ffn2_biases = [], []
+        self.cache_k_scales, self.cache_v_scales = [], []
+        self.cache_k_out_scales, self.cache_v_out_scales = [], []
 
         for i in range(self.num_layers):
             ln_scale_attr = self.get_attr(config.ln_scale_attrs, i)
@@ -321,6 +336,11 @@ class FusedMultiTransformerBase(Layer):
             ffn1_bias_attr = self.get_attr(config.ffn1_bias_attrs, i)
             ffn2_weight_attr = self.get_attr(config.ffn2_weight_attrs, i)
             ffn2_bias_attr = self.get_attr(config.ffn2_bias_attrs, i)
+            
+            cache_k_scale_attr = self.get_attr(config.cache_k_scale_attrs, i)
+            cache_v_scale_attr = self.get_attr(config.cache_v_scale_attrs, i)
+            cache_k_out_scale_attr = self.get_attr(config.cache_k_out_scale_attrs, i)
+            cache_v_out_scale_attr = self.get_attr(config.cache_v_out_scale_attrs, i)
 
             ln_scale = self.create_parameter(
                 attr=ln_scale_attr,
@@ -419,6 +439,42 @@ class FusedMultiTransformerBase(Layer):
                     dtype=self._dtype,
                     is_bias=True,
                 )
+                
+            cache_k_scale = None
+            if cache_k_scale_attr:
+                cache_k_scale = self.create_parameter(
+                    shape=[config.num_heads ],
+                    attr=cache_k_scale_attr,
+                    dtype='float32',
+                    is_bias=False,
+                )
+            
+            cache_v_scale = None
+            if cache_v_scale_attr:
+                cache_v_scale = self.create_parameter(
+                    shape=[config.num_heads ],
+                    attr=cache_v_scale_attr,
+                    dtype='float32',
+                    is_bias=False,
+                )
+                
+            cache_k_out_scale = None
+            if cache_k_out_scale_attr:
+                cache_k_out_scale = self.create_parameter(
+                    shape=[config.num_heads ],
+                    attr=cache_k_out_scale_attr,
+                    dtype='float32',
+                    is_bias=False,
+                )
+            
+            cache_v_out_scale = None
+            if cache_v_out_scale_attr:
+                cache_v_out_scale = self.create_parameter(
+                    shape=[config.num_heads ],
+                    attr=cache_v_out_scale_attr,
+                    dtype='float32',
+                    is_bias=False,
+                )
 
             # tensor model parallel
             if config.nranks > 1:
@@ -444,6 +500,11 @@ class FusedMultiTransformerBase(Layer):
             self.ffn1_biases.append(ffn1_bias)
             self.ffn2_weights.append(ffn2_weight)
             self.ffn2_biases.append(ffn2_bias)
+            
+            self.cache_k_scales.append(cache_k_scale)
+            self.cache_v_scales.append(cache_v_scale)
+            self.cache_k_out_scales.append(cache_k_out_scale)
+            self.cache_v_out_scales.append(cache_v_out_scale)
 
             self._add_parameter(ln_scale)
             self._add_parameter(ln_bias)
@@ -458,6 +519,11 @@ class FusedMultiTransformerBase(Layer):
             self._add_parameter(ffn1_bias)
             self._add_parameter(ffn2_weight)
             self._add_parameter(ffn2_bias)
+            
+            self._add_parameter(cache_k_scale)
+            self._add_parameter(cache_v_scale)
+            self._add_parameter(cache_k_out_scale)
+            self._add_parameter(cache_v_out_scale)
 
         self.dropout_rate = config.dropout_rate
 
@@ -1313,7 +1379,14 @@ class FusedBlockMultiTransformer(FusedMultiTransformerBase):
         v_quant_scales = kwargs.get("v_quant_scales", None)
         k_dequant_scales = kwargs.get("k_dequant_scales", None)
         v_dequant_scales = kwargs.get("v_dequant_scales", None)
-
+        
+        if not self.config.use_dynamic_cachekv_quant:
+            k_quant_scales = self.cache_k_scales
+            v_quant_scales = self.cache_v_scales
+            k_dequant_scales = self.cache_k_out_scales
+            v_dequant_scales = self.cache_v_out_scales
+            
+        
 
         fmha_out = paddle.incubate.nn.functional.block_multihead_attention(
                 qkv_out,
@@ -1343,7 +1416,7 @@ class FusedBlockMultiTransformer(FusedMultiTransformerBase):
                 kwargs.get("max_input_length", -1),
                 kwargs.get("block_size", 64),
                 self.use_neox_rotary_style,
-                True,
+                self.config.use_dynamic_cachekv_quant,
             )[0]
 
         out_linear_out = self.compute_out_linear(fmha_out, i)
@@ -1395,6 +1468,12 @@ class FusedBlockMultiTransformerA8W8(FusedBlockMultiTransformer, FusedMultiTrans
         v_quant_scales = kwargs.get("v_quant_scales", None)
         k_dequant_scales = kwargs.get("k_dequant_scales", None)
         v_dequant_scales = kwargs.get("v_dequant_scales", None)
+        
+        if not self.config.use_dynamic_cachekv_quant:
+            k_quant_scales = self.cache_k_scales
+            v_quant_scales = self.cache_v_scales
+            k_dequant_scales = self.cache_k_out_scales
+            v_dequant_scales = self.cache_v_out_scales
 
         # print("self.qkv_out_scales[i]", self.qkv_out_scales[i])
         # print("self.qkv_biases[i]", self.qkv_biases[i])
@@ -1426,7 +1505,7 @@ class FusedBlockMultiTransformerA8W8(FusedBlockMultiTransformer, FusedMultiTrans
                 kwargs.get("max_input_length", -1),
                 kwargs.get("block_size", 64),
                 self.use_neox_rotary_style,
-                True,
+                self.config.use_dynamic_cachekv_quant,
                 quant_round_type=self.quant_round_type,
                 quant_max_bound=self.quant_max_bound,
                 quant_min_bound=self.quant_min_bound,

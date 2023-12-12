@@ -31,7 +31,7 @@ from paddlenlp_ops import (
 from paddlenlp.utils.log import logger
 
 
-from paddlenlp.experimental.model_utils import ActScalesLoader, WeightScalesLoader
+from paddlenlp.experimental.model_utils import ActScalesLoader, WeightScalesLoader, CacheScaleLoader
 from paddlenlp.experimental.transformers.fused_transformer_layers import (
     FusedMultiTransformerA8W8,
     FusedMultiTransformerBase,
@@ -254,6 +254,18 @@ class LlamaInferenceModel(LlamaPretrainedModel):
             ffn2_weight_scale_attrs = [
                 paddle.ParamAttr(name="fusellama.{}.ffn2_weight_scale".format(i)) for i in range(self.num_layers)
             ]
+        
+        cache_k_scale_attrs = None 
+        cache_v_scale_attrs = None 
+        cache_k_out_scale_attrs = None 
+        cache_v_out_scale_attrs = None 
+        
+        if config.use_cachekv_int8 == "static":
+            cache_k_scale_attrs = [paddle.ParamAttr(name="fusellama.{}.cache_k_scale".format(i)) for i in range(self.num_layers)]
+            cache_v_scale_attrs = [paddle.ParamAttr(name="fusellama.{}.cache_v_scale".format(i)) for i in range(self.num_layers)]
+            cache_k_out_scale_attrs = [paddle.ParamAttr(name="fusellama.{}.cache_k_out_scale".format(i)) for i in range(self.num_layers)]
+            cache_v_out_scale_attrs = [paddle.ParamAttr(name="fusellama.{}.cache_v_out_scale".format(i)) for i in range(self.num_layers)]
+            
 
         transformer_config = FusedMultiTransformerConfig(
             self.hidden_size,
@@ -288,9 +300,14 @@ class LlamaInferenceModel(LlamaPretrainedModel):
             ffn_ln_bias_attrs=ffn_ln_bias_attrs,
             ffn1_bias_attrs=ffn1_bias_attrs,
             ffn2_bias_attrs=ffn2_bias_attrs,
+            cache_k_scale_attrs=cache_k_scale_attrs,
+            cache_v_scale_attrs=cache_v_scale_attrs,
+            cache_k_out_scale_attrs=cache_k_out_scale_attrs,
+            cache_v_out_scale_attrs=cache_v_out_scale_attrs,
             epsilon=self.epsilon,
             norm_type="rmsnorm",
             use_neox_rotary_style=True,
+            use_dynamic_cachekv_quant=config.use_cachekv_int8 == "dynamic",
         )
 
 
@@ -653,6 +670,7 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                 scale_map_dict = json.load(json_file)
                 act_scale_map_dict = scale_map_dict["act_scale"]
                 weight_scale_map_dict = scale_map_dict["weight_scale"]
+                cache_scale_map_dict = scale_map_dict["cache_scale"]
                 # TODO(RichardWooSJTU): support multi-cards
 
                 act_scale_json_path = os.path.join(self.quant_model_path, "act_scales.json")
@@ -669,6 +687,27 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                     concat_qkv=True,
                     concat_ffn1=True,
                 )
+                
+                if self.config.use_dynamic_cache_quant:
+                    cache_scale_json_path = os.path.join(self.quant_model_path, "cache_act_scales.json")
+                    cache_scales_loader = CacheScaleLoader(
+                        cache_scale_json_path,
+                        cache_scale_map_dict,
+                        num_of_layers=self.config.num_hidden_layers,
+                        num_heads=self.num_attention_heads // self.config.tensor_parallel_degree,
+                    )
+                    for k, v in cache_scales_loader.scale.items():
+                        for i_layer, weight_scale in enumerate(v):
+                            weight_scale = weight_scale.astype("float32")
+                            if k == "cache_k_scale":
+                                self.decoder.cache_k_scales[i_layer].set_value(weight_scale)
+                            elif k == "cache_v_scale":
+                                self.decoder.cache_v_scales[i_layer].set_value(weight_scale)
+                            elif k == "cache_k_out_scale":
+                                self.decoder.cache_k_out_scales[i_layer].set_value(weight_scale)
+                            else:
+                                self.decoder.cache_v_out_scales[i_layer].set_value(weight_scale)
+                                
                 for k, v in weight_scales_loader.scale.items():
                     if "qkv_" in k:
                         for i_layer, weight_scale in enumerate(v):

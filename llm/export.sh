@@ -13,12 +13,11 @@
 # limitations under the License.
 
 export PYTHONPATH=$(dirname $(pwd)):$PYTHONPATH
-export DISTRIBUTED_TRAINER_ENDPOINTS=10.174.140.213:60105,10.174.140.213:60122,10.174.140.213:60196,10.174.140.213:60232,10.174.140.213:60257,10.174.140.213:60317,10.174.140.213:60458,10.174.140.213:60800
 
 
-model_dir=${1:-"checkpoints/llama65b_ptq"}
-src_len=${2:-1024}
-dec_len=${3:-1024}
+model_dir=${1:-"checkpoints/llama65b_ptq_smooth"}
+src_len=${2:-1100}
+dec_len=${3:-330}
 quant_type=${4:-"a8w8"}
 
 total_len=`expr ${src_len} + ${dec_len}`

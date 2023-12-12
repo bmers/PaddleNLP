@@ -1115,11 +1115,11 @@ class StaticBlockInferencePredictor(BasePredictor):
 
     def _preprocess(self, source):
         for i, text in enumerate(source):
-            print("text: ", text)
+            # print("text: ", text)
             tokens = self.tokenizer(text, return_tensors="np", padding=False, max_length=(self.config.src_length - self.config.max_length))
             input_ids = tokens["input_ids"][0]
             length = len(input_ids)
-            print("input_ids: ", input_ids)
+            # print("input_ids: ", input_ids)
             print("length: ", length)
             self.inputs["input_ids"][i : i + 1, :length] = input_ids
             self.inputs["penalty_score"][i : i + 1] = self.config.repetition_penalty
@@ -1135,7 +1135,7 @@ class StaticBlockInferencePredictor(BasePredictor):
             self.inputs["stop_flags"][i : i + 1] = False
             reset_stop_value(self.inputs["not_need_stop"])
             need_block_nums = (length + self.config.max_length + self.pre_cache_length + self.block_size - 1) // self.block_size
-            print("self.free_list",  self.free_list)
+            # print("self.free_list",  self.free_list)
             for bi in range(need_block_nums):
                 bi_now = self.free_list.pop()
                 self.used_list[i].append(bi_now)
@@ -1423,10 +1423,13 @@ def predict():
         source_texts = []
 
         data_file = open("humaneval_solution.json", 'r')
+        
+        dataset = []
+        for line in data_file.readlines():
+            dataset.append(json.loads(line))
 
         for i in range(predictor_args.batch_size):
-            line = data_file.readline()
-            data = json.loads(line)
+            data = dataset[i % 164]
             source_texts.append(data["prompt"])
 
 
@@ -1463,8 +1466,8 @@ def benchmark(predictor, predictor_args, model_args):
     batch_benchmark_texts = batchfy_text(benchmark_texts, predictor_args.batch_size)
     print("***********Start Benchmark**********")
 
-    warmup_time = 3
-    test_time = 20
+    warmup_time = 2
+    test_time = 10
 
     print("***********Start Warmup**********")
     for i in range(warmup_time):

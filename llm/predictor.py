@@ -1116,7 +1116,7 @@ class StaticBlockInferencePredictor(BasePredictor):
     def _preprocess(self, source):
         for i, text in enumerate(source):
             print("text: ", text)
-            tokens = self.tokenizer(text, return_tensors="np", padding=False, max_length=self.config.src_length)
+            tokens = self.tokenizer(text, return_tensors="np", padding=False, max_length=(self.config.src_length - self.config.max_length))
             input_ids = tokens["input_ids"][0]
             length = len(input_ids)
             print("input_ids: ", input_ids)
@@ -1135,6 +1135,7 @@ class StaticBlockInferencePredictor(BasePredictor):
             self.inputs["stop_flags"][i : i + 1] = False
             reset_stop_value(self.inputs["not_need_stop"])
             need_block_nums = (length + self.config.max_length + self.pre_cache_length + self.block_size - 1) // self.block_size
+            print("self.free_list",  self.free_list)
             for bi in range(need_block_nums):
                 bi_now = self.free_list.pop()
                 self.used_list[i].append(bi_now)
@@ -1241,7 +1242,9 @@ def create_predictor(
                         LlamaForCausalLMInferenceModel as LlamaInferenceModel,
                     )
                 model = LlamaInferenceModel.from_pretrained(
-                    predictor_args.model_name_or_path, config=config, dtype=predictor_args.dtype
+                    predictor_args.model_name_or_path, config=config, dtype=predictor_args.dtype, 
+                    tensor_parallel_degree=tensor_parallel_degree,
+                    tensor_parallel_rank=tensor_parallel_rank,
                 )
                 model.eval()
 
@@ -1432,27 +1435,29 @@ def predict():
 
 def benchmark(predictor, predictor_args, model_args):
     # Just construct a simple benchmark input. We pad input to the src_length.
-    test_texts = "hello world, how are you?"
-    benchmark_texts = [test_texts + "<pad>" * predictor_args.src_length for _ in range(predictor_args.batch_size)]
+    test_texts = ""
+    benchmark_texts = [test_texts + "<pad>" * (predictor_args.src_length - predictor_args.max_length) for _ in range(predictor_args.batch_size)]
 
     batch_benchmark_texts = batchfy_text(benchmark_texts, predictor_args.batch_size)
     print("***********Start Benchmark**********")
 
-    warmup_time = 10
-    test_time = 100
+    warmup_time = 3
+    test_time = 20
 
     print("***********Start Warmup**********")
-    for _ in range(warmup_time):
+    for i in range(warmup_time):
+        print("warm up ", i)
         for bs, batch_source_text in enumerate(batch_benchmark_texts):
             outputs = predictor.predict(batch_source_text)
 
     print("***********Start Speed Test**********")
     start = time.perf_counter()
     output_tokens = 0
-    for _ in range(test_time):
+    for i in range(test_time):
+        print("test ", i)
         for bs, batch_source_text in enumerate(batch_benchmark_texts):
             outputs = predictor.predict(batch_source_text)
-            output_tokens += sum([len(output) for output in outputs])
+            output_tokens += predictor_args.max_length * predictor_args.batch_size
     end = time.perf_counter()
     print("Avg Elapse time is: ", (end - start) / test_time)
     print("Output tokens is: ", output_tokens)

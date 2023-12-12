@@ -838,9 +838,13 @@ class FusedMultiTransformerBase(Layer):
                 **kwargs
             )
             # print("out_linear_out", out_linear_out)
+            # exit(0)
             # all_reduce
             if self.nranks > 1:
                 dist.all_reduce(out_linear_out)
+
+            
+            # print("out_linear_out", out_linear_out)
 
             # ffn layernorm
             tmp_out, residual_input = self.compute_ffn_layernorm(out_linear_out, residual_input, i)
@@ -855,10 +859,11 @@ class FusedMultiTransformerBase(Layer):
             # ffn2 matmul
             ffn2_out = self.compute_ffn2(ffn1_out, i)
             # print("ffn2_out", ffn2_out)
-            # exit(0)
             # all_reduce
             if self.nranks > 1:
                 dist.all_reduce(ffn2_out)
+            # print("ffn2_out", ffn2_out)
+            # exit(0)
 
             # norm + residual_add_bias
             tmp_out, residual_input = self.compute_bias_residual_layernorm(ffn2_out, residual_input, i, self.num_layers)
@@ -1194,7 +1199,7 @@ class FusedMultiTransformerA8W8(FusedMultiTransformerBase):
     ):
         # print("compute_fmha")
         qkv_out = dequant_int8(qkv_out, self.qkv_out_scales[i], self._dtype)
-        print("dequant_int8", qkv_out)
+        # print("dequant_int8", qkv_out)
         # print("compute_fmha dequant")
         if self.qkv_biases[i] is not None:
             qkv_out = paddle.add(qkv_out, self.qkv_biases[i])
@@ -1208,7 +1213,7 @@ class FusedMultiTransformerA8W8(FusedMultiTransformerBase):
         q_out, k_out, v_out = qkv_transpose_split(
             qkv_out, padding_offset, seq_lens, input_ids, self.num_heads, self.head_dim
         )
-        print("qkv_transpose_split", q_out)
+        # print("qkv_transpose_split", q_out)
         # print("compute_fmha qkv_transpose_split")
         # rotary emb (inplace)
         if rotary_embs is not None:
@@ -1220,7 +1225,7 @@ class FusedMultiTransformerA8W8(FusedMultiTransformerBase):
                 rotary_emb_dims=rotary_emb_dims,
                 use_neox=self.use_neox_rotary_style,
             )
-        print("compute_fmha rotary_embs", q_out, k_out)
+        # print("compute_fmha rotary_embs", q_out, k_out)
         if pre_caches is not None:
             k_out = paddle.concat([pre_caches[i][0, :bsz], k_out], axis=2)
             v_out = paddle.concat([pre_caches[i][1, :bsz], v_out], axis=2)
@@ -1241,7 +1246,7 @@ class FusedMultiTransformerA8W8(FusedMultiTransformerBase):
         )
         # print("compute_fmha fmha")
         fmha_out = transpose_remove_padding(qktv_out, seq_lens, padding_offset)
-        print("before quant", fmha_out)
+        # print("before quant", fmha_out)
         # print("compute_fmha transpose_remove_padding")
         fmha_out = quant_int8(
             fmha_out,
@@ -1513,7 +1518,13 @@ class FusedBlockMultiTransformerA8W8(FusedBlockMultiTransformer, FusedMultiTrans
                 compute_dtype=self._fuse_kernel_compute_dtype
             )[0]
         # print('self.act_scales["out_linear_in_scale"][i]', self.act_scales["out_linear_in_scale"][i])
+        # print("self.qkv_out_scales[i]", self.qkv_out_scales[i])
+        # print("self.qkv_biases[i]", self.qkv_biases[i])
+        # print("self.linear_shifts[i]", self.linear_shifts[i])
+        # print("self.linear_smooths[i]", self.linear_smooths[i])
         # print("layer", i, fmha_out)
+    
+        
 
         out_linear_out = self.compute_out_linear(fmha_out, i)
 

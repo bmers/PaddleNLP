@@ -997,6 +997,8 @@ class LlamaPretrainedModel(PretrainedModel):
     @classmethod
     def _get_tensor_parallel_mappings(cls, config: LlamaConfig, is_split=True):
 
+        logger.info(f"llama pretrain model _get_tensor_parallel_mappings")
+
         from paddlenlp.transformers.conversion_utils import split_or_merge_func
 
         fn = split_or_merge_func(

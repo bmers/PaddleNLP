@@ -17,9 +17,11 @@ from typing_extensions import Self
 import json
 import os
 
+
 import numpy as np
 import time
 import paddle
+from functools import partial
 from paddle import nn
 from paddle.distributed import fleet
 from paddle.nn.quant import weight_quantize
@@ -712,24 +714,30 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                     if "qkv_" in k:
                         for i_layer, weight_scale in enumerate(v):
                             tmp = paddle.to_tensor(
-                                weight_scale / (127.0 * 127.0 * act_scale_loader.scale["qkv_in_scale"][i_layer])
+                                weight_scale / (127.0 * 127.0 * act_scale_loader.scale["qkv_in_scale"][i_layer]) # [3 * num_head * dim_head]
                             ).reshape([-1])
+
+                            if self.config.tensor_parallel_degree > 1:
+                                tmp = tmp.reshape([3, self.num_attention_heads, head_size]).split(self.config.tensor_parallel_degree, axis=1)[self.config.tensor_parallel_rank].reshape([-1])
                             self.transformer_block.qkv_out_scales[i_layer].set_value(tmp)
                         pass
                     elif "out_linear_" in k:
                         for i_layer, weight_scale in enumerate(v):
-                            self.transformer_block.linear_out_scales[i_layer].set_value(
-                                paddle.to_tensor(
+                            tmp = paddle.to_tensor(
                                     weight_scale
                                     / (127.0 * 127.0 * act_scale_loader.scale["out_linear_in_scale"][i_layer])
                                 )
-                            )
+                            self.transformer_block.linear_out_scales[i_layer].set_value(tmp)
                     elif "ffn1_weight_scale" in k:
                         for i_layer, weight_scale in enumerate(v):
-                            self.transformer_block.ffn1_out_scales[i_layer].set_value(
-                                paddle.to_tensor(
+                            tmp = paddle.to_tensor(
                                     weight_scale / (127.0 * 127.0 * act_scale_loader.scale["ffn1_in_scale"][i_layer])
                                 )
+                            if self.config.tensor_parallel_degree > 1:
+                                tmp = paddle.split(tmp, self.config.tensor_parallel_degree * 2)
+                                tmp = paddle.concat([tmp[self.config.tensor_parallel_rank], tmp[self.config.tensor_parallel_rank + self.config.tensor_parallel_degree]], axis=0)
+                            self.transformer_block.ffn1_out_scales[i_layer].set_value(
+                                tmp
                             )
                     elif "ffn2" in k:
                         for i_layer, weight_scale in enumerate(v):
@@ -980,6 +988,89 @@ class LlamaForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, LlamaPr
         self.llama = LlamaBlockInferenceModel(config)
         self.lm_head = LlamaLMHead(config)
 
+    
+    @classmethod
+    def _get_tensor_parallel_mappings(cls, config: LlamaConfig, is_split=True):
+
+        logger.info(f"llama inference model _get_tensor_parallel_mappings")
+
+        from paddlenlp.transformers.conversion_utils import split_or_merge_func
+
+        fn = split_or_merge_func(
+            is_split=is_split,
+            tensor_parallel_degree=config.tensor_parallel_degree,
+            tensor_parallel_rank=config.tensor_parallel_rank,
+            num_attention_heads=config.num_attention_heads,
+        )
+
+        def get_tensor_parallel_split_mappings(num_layers):
+            final_actions = {}
+
+            base_actions = {
+                "lm_head.weight": partial(fn, is_column=True),
+                # Row Linear
+                "embed_tokens.weight": partial(fn, is_column=False),
+                "layers.0.self_attn.o_proj.weight": partial(fn, is_column=False),
+                "layers.0.mlp.down_proj.weight": partial(fn, is_column=False),
+            }
+
+            if config.quant_type == "a8w8":
+                if config.quantization_config.shift_smooth_all_linears:
+                    base_actions["layers.0.self_attn.o_proj.shift_bias"] = partial(fn, is_column=True)
+                    base_actions["layers.0.self_attn.o_proj.smooth_weight"] = partial(fn, is_column=True)
+                    base_actions["layers.0.mlp.down_proj.shift_bias"] = partial(fn, is_column=True)
+                    base_actions["layers.0.mlp.down_proj.smooth_weight"] = partial(fn, is_column=True)
+
+                if config.quantization_config.shift:
+                    if config.fuse_attention_qkv:
+                        base_actions["layers.0.self_attn.qkv_proj.bias"] = partial(fn, is_column=True)
+                    else:
+                        base_actions["layers.0.self_attn.q_proj.bias"] = partial(fn, is_column=True)
+                        # if we have enough num_key_value_heads to split, then split it.
+                        if config.num_key_value_heads % config.tensor_parallel_degree == 0:
+                            base_actions["layers.0.self_attn.k_proj.bias"] = partial(fn, is_column=True)
+                            base_actions["layers.0.self_attn.v_proj.bias"] = partial(fn, is_column=True)
+
+                    if config.fuse_attention_ffn:
+                        base_actions["layers.0.mlp.gate_up_fused_proj.bias"] = partial(
+                            fn, is_column=True, is_naive_2fuse=True
+                        )
+                    else:
+                        base_actions["layers.0.mlp.gate_proj.bias"] = partial(fn, is_column=True)
+                        base_actions["layers.0.mlp.up_proj.bias"] = partial(fn, is_column=True)
+
+
+
+            # Column Linear
+            if config.fuse_attention_qkv:
+                base_actions["layers.0.self_attn.qkv_proj.weight"] = partial(fn, is_column=True)
+            else:
+                base_actions["layers.0.self_attn.q_proj.weight"] = partial(fn, is_column=True)
+                # if we have enough num_key_value_heads to split, then split it.
+                if config.num_key_value_heads % config.tensor_parallel_degree == 0:
+                    base_actions["layers.0.self_attn.k_proj.weight"] = partial(fn, is_column=True)
+                    base_actions["layers.0.self_attn.v_proj.weight"] = partial(fn, is_column=True)
+
+            if config.fuse_attention_ffn:
+                base_actions["layers.0.mlp.gate_up_fused_proj.weight"] = partial(
+                    fn, is_column=True, is_naive_2fuse=True
+                )
+            else:
+                base_actions["layers.0.mlp.gate_proj.weight"] = partial(fn, is_column=True)
+                base_actions["layers.0.mlp.up_proj.weight"] = partial(fn, is_column=True)
+
+            for key, action in base_actions.items():
+                if "layers.0." in key:
+                    for i in range(num_layers):
+                        final_actions[key.replace("layers.0.", f"layers.{i}.")] = action
+                final_actions[key] = action
+
+            return final_actions
+
+        mappings = get_tensor_parallel_split_mappings(config.num_hidden_layers)
+
+        return mappings
+
     @classmethod
     def from_pretrained(
         cls, pretrained_model_name_or_path, from_hf_hub: bool = False, subfolder: str | None = None, *args, **kwargs
@@ -1023,7 +1114,7 @@ class LlamaForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, LlamaPr
 
         init_args = config["init_args"] or ()
         with ContextManagers(init_contexts):
-            model = cls(config, *init_args, **model_kwargs)
+            model = cls(config)
 
         resolved_archive_file, sharded_metadata, is_sharded = cls._resolve_model_file_path(
             pretrained_model_name_or_path,
@@ -1037,7 +1128,11 @@ class LlamaForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, LlamaPr
             variant=variant,
         )
 
-        model.state_dict = paddle.load(resolved_archive_file, return_numpy=True)
+        if config.tensor_parallel_degree > 1:
+            logger.info(f"convert_tensor_parallel {config.tensor_parallel_degree}")
+            model.state_dict = model.convert_tensor_parallel(resolved_archive_file, config)
+        else:
+            model.state_dict = paddle.load(resolved_archive_file, return_numpy=True)
         model.set_state_dict(model.state_dict)
 
         return model

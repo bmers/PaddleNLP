@@ -445,6 +445,8 @@ class GenerationBlockInferenceModel(GenerationMixin):
 
         if use_cachekv_int8 == "static" or use_cachekv_int8 == "dynamic":
             cachekv_dtype = "uint8"
+            
+        if use_cachekv_int8 == "dynamic":
             cache_k_quant_scales = [
                 paddle.static.InputSpec(
                     shape=[self.config.num_attention_heads],

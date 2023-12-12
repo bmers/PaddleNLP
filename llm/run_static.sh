@@ -11,13 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-model_dir=${1:-"meta-llama/Llama-2-7b-chat"}
-src_len=${2:-1024}
-dec_len=${3:-1024}
-quant_type=${4:-"a8w8"}
-
-
 export PYTHONPATH=$(dirname $(pwd)):$PYTHONPATH
 
 export FLAGS_call_stack_level=2
@@ -28,16 +21,19 @@ export FLAGS_control_flow_use_new_executor=1
 export FLAGS_new_executor_serial_run=1
 export FLAGS_allocator_strategy=naive_best_fit
 export FLAGS_fraction_of_gpu_memory_to_use=0.92
+export DISTRIBUTED_TRAINER_ENDPOINTS=10.174.140.213:60105,10.174.140.213:60122,10.174.140.213:60196,10.174.140.213:60232,10.174.140.213:60257,10.174.140.213:60317,10.174.140.213:60458,10.174.140.213:60800
 
 
-model_dir=${1:-"checkpoints/llama_ptq_ckpts_smooth_all_shift_mp2"}
+
+model_dir=${1:-"checkpoints/llama65b_ptq_mp8"}
 src_len=${2:-1024}
 dec_len=${3:-1024}
+quant_type=${4:-"a8w8"}
 
 total_len=`expr ${src_len} + ${dec_len}`
 
 python -m paddle.distributed.launch \
-    --gpus "6,7" \
+    --gpus "0,1,2,3,4,5,6,7" \
     predictor.py \
     --model_name_or_path ./inference_model/${model_dir} \
     --dtype float16 \
@@ -45,9 +41,10 @@ python -m paddle.distributed.launch \
     --max_length ${dec_len} \
     --output_file "infer.json" \
     --mode "static" \
-    --batch_size 1 \
+    --batch_size 10 \
     --block_size 64 \
     --block_attn \
-    --inference_model 
+    --inference_model  \
+    --use_cachekv_int8 static
 
 # python read_res.py --model_name_or_path ${model_dir}

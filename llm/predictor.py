@@ -1419,8 +1419,18 @@ def predict():
                 source_texts.append(example["src"])
                 target_texts.append(example["tgt"])
     else:
-        source_texts = ["解释一下“温故而知新”", "你好，请问你是谁?"]
-        target_texts = ["", ""]
+        # source_texts = ["解释一下“温故而知新”", "你好，请问你是谁?"]
+        source_texts = []
+
+        data_file = open("humaneval_solution.json", 'r')
+
+        for i in range(predictor_args.batch_size):
+            line = data_file.readline()
+            data = json.loads(line)
+            source_texts.append(data["prompt"])
+
+
+        target_texts = [""] * predictor_args.batch_size
 
     batch_source_texts = batchfy_text(source_texts, predictor_args.batch_size)
     batch_target_texts = batchfy_text(target_texts, predictor_args.batch_size)

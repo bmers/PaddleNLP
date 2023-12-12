@@ -3,6 +3,7 @@ from paddlenlp_ops import get_output
 from dataclasses import dataclass, field
 from paddlenlp.trainer import PdArgumentParser
 import numpy as np
+import json
 from paddlenlp.transformers import (
     AutoTokenizer,
     LlamaTokenizer,
@@ -39,8 +40,10 @@ while True:
         outputs.append(output_numpy)
         if (output_tensor[0, 0] == -1): break
     output = np.concatenate(outputs, axis=1).tolist()
-    for seq in output:
-        print("seq_len: ", len(seq))
+
+    for i, seq in enumerate(output):
+        print(i, "seq_len: ", len(seq))
         seq = tokenizer.decode(seq)
-        print("output: ", seq)
+
+        print("output: ", repr(seq))
     print("end")

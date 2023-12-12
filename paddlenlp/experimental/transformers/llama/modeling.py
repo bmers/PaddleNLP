@@ -310,6 +310,7 @@ class LlamaInferenceModel(LlamaPretrainedModel):
             norm_type="rmsnorm",
             use_neox_rotary_style=True,
             use_dynamic_cachekv_quant=config.use_cachekv_int8 == "dynamic",
+            rank_id=config.tensor_parallel_rank,
         )
 
 

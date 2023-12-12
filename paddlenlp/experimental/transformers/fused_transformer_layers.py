@@ -196,6 +196,7 @@ class FusedMultiTransformerConfig:
         ring_id=-1,
         kv_num_heads=-1,
         use_dynamic_cachekv_quant=True,
+        rank_id=-1,
     ):
         self.embed_dim = embed_dim
         self.num_heads = num_heads
@@ -251,6 +252,7 @@ class FusedMultiTransformerConfig:
         self.residual_alpha = residual_alpha
         self.num_layers = num_layers
         self.nranks = nranks
+        self.rank_id = rank_id
         self.trans_qkvw = trans_qkvw
         self.ring_id = ring_id
 
@@ -1422,6 +1424,9 @@ class FusedBlockMultiTransformer(FusedMultiTransformerBase):
                 kwargs.get("block_size", 64),
                 self.use_neox_rotary_style,
                 self.config.use_dynamic_cachekv_quant,
+                quant_round_type=self.quant_round_type,
+                quant_max_bound=self.quant_max_bound,
+                quant_min_bound=self.quant_min_bound,
             )[0]
 
         out_linear_out = self.compute_out_linear(fmha_out, i)

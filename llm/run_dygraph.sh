@@ -25,7 +25,7 @@ export FLAGS_new_executor_serial_run=1
 export FLAGS_allocator_strategy=naive_best_fit
 export FLAGS_fraction_of_gpu_memory_to_use=0.92
 
-model_dir=${1:-"checkpoints/llama_ptq_ckpts_smooth_all_shift"}
+model_dir=${1:-"checkpoints/llama65b_ptq"}
 src_len=${2:-1024}
 dec_len=${3:-1024}
 quant_type=${4:-"a8w8"}
@@ -34,7 +34,7 @@ quant_type=${4:-"a8w8"}
 total_len=`expr ${src_len} + ${dec_len}`
 
 python -m paddle.distributed.launch \
-    --gpus "6, 7" \
+    --gpus "0,1,2,3,4,5,6,7" \
     predictor.py \
     --model_name_or_path ${model_dir} \
     --dtype float16 \

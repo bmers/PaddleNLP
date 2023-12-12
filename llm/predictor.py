@@ -1144,7 +1144,13 @@ class StaticBlockInferencePredictor(BasePredictor):
             # encoder_block_num = len(task['block_tables'])
             self.inputs['encoder_block_lens'][i:i+1] = need_block_nums
 
-
+def get_ptq_multicards_num(directory):
+    count = 0  
+    prefix = "act_scales_"
+    for filename in os.listdir(directory):  
+        if filename.startswith(prefix):  
+            count += 1 
+    return count
 
 def create_predictor(
     predictor_args: PredictorArgument,
@@ -1211,7 +1217,8 @@ def create_predictor(
             config.quant_type = None
             config.model_name_or_path = ""
             config.use_cachekv_int8 = predictor_args.use_cachekv_int8
-
+            config.single_card_ptq = True
+            
             if predictor_args.quant_type is not None and predictor_args.quant_type.startswith("weight_only_int"):
                 weight_only_quant_bits = int(predictor_args.quant_type[-1])
                 config.weight_only_quant_bits = weight_only_quant_bits
@@ -1220,6 +1227,11 @@ def create_predictor(
             if config.quantization_config.quant_type is not None and "a8w8" in config.quantization_config.quant_type:
                 config.model_name_or_path = predictor_args.model_name_or_path
                 config.quant_type = config.quantization_config.quant_type
+                    
+                ptq_multicards_num = get_ptq_multicards_num(config.model_name_or_path)
+                logger.info(f"PTQ from {ptq_multicards_num} cards, so we will not split")
+                if ptq_multicards_num > 1:
+                    config.single_card_ptq = False
 
                 # Turn on GEMM int8 kernel tuning
                 paddle.base.core.enable_autotune()

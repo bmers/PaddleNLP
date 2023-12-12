@@ -672,11 +672,14 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                 scale_map_dict = json.load(json_file)
                 act_scale_map_dict = scale_map_dict["act_scale"]
                 weight_scale_map_dict = scale_map_dict["weight_scale"]
-                cache_scale_map_dict = scale_map_dict["cache_scale"]
+                cache_scale_map_dict = scale_map_dict["cachekv_scale"]
                 # TODO(RichardWooSJTU): support multi-cards
 
                 act_scale_json_path = os.path.join(self.quant_model_path, "act_scales.json")
                 weight_scale_json_path = os.path.join(self.quant_model_path, "weight_scales.json")
+                if self.config.tensor_parallel_degree > 1 and not self.config.single_card_ptq:
+                    act_scale_json_path = os.path.join(self.quant_model_path, f"act_scales_{self.config.tensor_parallel_rank}.json")
+                    weight_scale_json_path = os.path.join(self.quant_model_path, f"weight_scales_{self.config.tensor_parallel_rank}.json")
                 act_scale_loader = ActScalesLoader(
                     act_scale_json_path, act_scale_map_dict, num_of_layers=self.config.num_hidden_layers
                 )
@@ -690,8 +693,10 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                     concat_ffn1=True,
                 )
                 
-                if self.config.use_dynamic_cache_quant:
-                    cache_scale_json_path = os.path.join(self.quant_model_path, "cache_act_scales.json")
+                if self.config.use_cachekv_int8 == "static":
+                    cache_scale_json_path = os.path.join(self.quant_model_path, "cachekv_act_scales.json")
+                    if self.config.tensor_parallel_degree > 1 and not self.config.single_card_ptq:
+                        cache_scale_json_path = os.path.join(self.quant_model_path, f"cachekv_act_scales_{self.config.tensor_parallel_rank}.json")
                     cache_scales_loader = CacheScaleLoader(
                         cache_scale_json_path,
                         cache_scale_map_dict,
@@ -717,7 +722,7 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                                 weight_scale / (127.0 * 127.0 * act_scale_loader.scale["qkv_in_scale"][i_layer]) # [3 * num_head * dim_head]
                             ).reshape([-1])
 
-                            if self.config.tensor_parallel_degree > 1:
+                            if self.config.tensor_parallel_degree > 1 and self.config.single_card_ptq:
                                 tmp = tmp.reshape([3, self.num_attention_heads, head_size]).split(self.config.tensor_parallel_degree, axis=1)[self.config.tensor_parallel_rank].reshape([-1])
                             self.transformer_block.qkv_out_scales[i_layer].set_value(tmp)
                         pass
@@ -733,7 +738,7 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                             tmp = paddle.to_tensor(
                                     weight_scale / (127.0 * 127.0 * act_scale_loader.scale["ffn1_in_scale"][i_layer])
                                 )
-                            if self.config.tensor_parallel_degree > 1:
+                            if self.config.tensor_parallel_degree > 1 and self.config.single_card_ptq:
                                 tmp = paddle.split(tmp, self.config.tensor_parallel_degree * 2)
                                 tmp = paddle.concat([tmp[self.config.tensor_parallel_rank], tmp[self.config.tensor_parallel_rank + self.config.tensor_parallel_degree]], axis=0)
                             self.transformer_block.ffn1_out_scales[i_layer].set_value(
@@ -1115,22 +1120,29 @@ class LlamaForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, LlamaPr
         init_args = config["init_args"] or ()
         with ContextManagers(init_contexts):
             model = cls(config)
+            
+        if not config.single_card_ptq:
+            resolved_archive_file = pretrained_model_name_or_path
+        else:
+            resolved_archive_file, sharded_metadata, is_sharded = cls._resolve_model_file_path(
+                pretrained_model_name_or_path,
+                cache_dir=cache_dir,
+                subfolder=subfolder,
+                from_hf_hub=from_hf_hub,
+                from_aistudio=from_aistudio,
+                config=config,
+                convert_from_torch=convert_from_torch,
+                use_safetensors=use_safetensors,
+                variant=variant,
+            )
+        logger.info(f"Load model form {resolved_archive_file}")
 
-        resolved_archive_file, sharded_metadata, is_sharded = cls._resolve_model_file_path(
-            pretrained_model_name_or_path,
-            cache_dir=cache_dir,
-            subfolder=subfolder,
-            from_hf_hub=from_hf_hub,
-            from_aistudio=from_aistudio,
-            config=config,
-            convert_from_torch=convert_from_torch,
-            use_safetensors=use_safetensors,
-            variant=variant,
-        )
-
-        if config.tensor_parallel_degree > 1:
+        if config.tensor_parallel_degree > 1 and config.single_card_ptq:
             logger.info(f"convert_tensor_parallel {config.tensor_parallel_degree}")
             model.state_dict = model.convert_tensor_parallel(resolved_archive_file, config)
+        elif config.tensor_parallel_degree > 1:
+            resolved_archive_file = os.path.join(resolved_archive_file, f"mp_{config.tensor_parallel_rank:0>2d}_sharding_00_pp_00", "model.pdparams")
+            model.state_dict = paddle.load(resolved_archive_file, return_numpy=True)
         else:
             model.state_dict = paddle.load(resolved_archive_file, return_numpy=True)
         model.set_state_dict(model.state_dict)

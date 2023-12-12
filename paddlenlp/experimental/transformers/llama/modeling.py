@@ -707,13 +707,13 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                         for i_layer, weight_scale in enumerate(v):
                             weight_scale = weight_scale.astype("float32")
                             if k == "cache_k_scale":
-                                self.decoder.cache_k_scales[i_layer].set_value(weight_scale)
+                                self.transformer_block.cache_k_scales[i_layer].set_value(weight_scale)
                             elif k == "cache_v_scale":
-                                self.decoder.cache_v_scales[i_layer].set_value(weight_scale)
+                                self.transformer_block.cache_v_scales[i_layer].set_value(weight_scale)
                             elif k == "cache_k_out_scale":
-                                self.decoder.cache_k_out_scales[i_layer].set_value(weight_scale)
+                                self.transformer_block.cache_k_out_scales[i_layer].set_value(weight_scale)
                             else:
-                                self.decoder.cache_v_out_scales[i_layer].set_value(weight_scale)
+                                self.transformer_block.cache_v_out_scales[i_layer].set_value(weight_scale)
                                 
                 for k, v in weight_scales_loader.scale.items():
                     if "qkv_" in k:

@@ -709,7 +709,7 @@ class DygraphBlockInferencePredictor(BasePredictor):
         self.architectures = self.model_config.architectures[0].lower()
 
         self.dtype = config.dtype or self.model_config
-        if config.use_cachekv_int8 == "dynamic":
+        if config.use_cachekv_int8 == "dynamic" or config.use_cachekv_int8 == "static":
             self.cache_kvs = [paddle.zeros(shape, dtype="uint8") for shape in self.cache_kvs_shape]
         else:
             self.cache_kvs = [paddle.zeros(shape, dtype=self.dtype) for shape in self.cache_kvs_shape]
@@ -917,7 +917,7 @@ class StaticBlockInferencePredictor(BasePredictor):
             self.inputs["src_mask"] = (pre_cache_mask - 1) * 1e4
 
         self.cache_kvs = {}
-        if config.use_cachekv_int8 == "dynamic":
+        if config.use_cachekv_int8 == "dynamic" or config.use_cachekv_int8 == "static":
             for i in range(len(self.cache_kvs_shape) // 2):
                 self.cache_kvs["key_caches_{}".format(i)] = paddle.zeros(self.cache_kvs_shape[2 * i], dtype="uint8")
                 self.cache_kvs["value_caches_{}".format(i)] = paddle.zeros(

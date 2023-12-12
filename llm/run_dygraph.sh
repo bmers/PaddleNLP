@@ -18,7 +18,7 @@ export PYTHONPATH=$(dirname $(pwd)):$PYTHONPATH
 
 export FLAGS_call_stack_level=2
 export GLOG_logtostderr=true
-export GLOG_v=0
+export GLOG_v=1
 
 export FLAGS_control_flow_use_new_executor=1
 export FLAGS_new_executor_serial_run=1
@@ -27,7 +27,7 @@ export FLAGS_fraction_of_gpu_memory_to_use=0.92
 
 model_dir=${1:-"checkpoints/llama65b_ptq"}
 src_len=${2:-1024}
-dec_len=${3:-1024}
+dec_len=${3:-100}
 quant_type=${4:-"a8w8"}
 # quant_type=${4:-"None"}
 
@@ -45,5 +45,6 @@ python -m paddle.distributed.launch \
     --batch_size 2 \
     --inference_model \
     --quant_type ${quant_type}  \
-    --block_attn
+    --block_attn \
+    --use_cachekv_int8 static
 

@@ -443,7 +443,7 @@ class FusedMultiTransformerBase(Layer):
             cache_k_scale = None
             if cache_k_scale_attr:
                 cache_k_scale = self.create_parameter(
-                    shape=[config.num_heads ],
+                    shape=[self.num_heads],
                     attr=cache_k_scale_attr,
                     dtype='float32',
                     is_bias=False,
@@ -452,7 +452,7 @@ class FusedMultiTransformerBase(Layer):
             cache_v_scale = None
             if cache_v_scale_attr:
                 cache_v_scale = self.create_parameter(
-                    shape=[config.num_heads ],
+                    shape=[self.num_heads],
                     attr=cache_v_scale_attr,
                     dtype='float32',
                     is_bias=False,
@@ -461,7 +461,7 @@ class FusedMultiTransformerBase(Layer):
             cache_k_out_scale = None
             if cache_k_out_scale_attr:
                 cache_k_out_scale = self.create_parameter(
-                    shape=[config.num_heads ],
+                    shape=[self.num_heads],
                     attr=cache_k_out_scale_attr,
                     dtype='float32',
                     is_bias=False,
@@ -470,7 +470,7 @@ class FusedMultiTransformerBase(Layer):
             cache_v_out_scale = None
             if cache_v_out_scale_attr:
                 cache_v_out_scale = self.create_parameter(
-                    shape=[config.num_heads ],
+                    shape=[self.num_heads],
                     attr=cache_v_out_scale_attr,
                     dtype='float32',
                     is_bias=False,

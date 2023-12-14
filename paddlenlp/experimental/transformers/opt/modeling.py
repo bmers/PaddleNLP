@@ -18,7 +18,7 @@ from __future__ import annotations
 import numpy as np
 import paddle
 import paddle.nn as nn
-from paddlenlp_ops import get_padding_offset
+# from paddlenlp_ops import get_padding_offset
 
 from paddlenlp.experimental.transformers.fused_transformer_layers import (
     FusedMultiTransformerBase,

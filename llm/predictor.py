@@ -734,7 +734,9 @@ class DygraphBlockInferencePredictor(BasePredictor):
             pre_cache_mask[:, :, :, :self.pre_cache_length] = 1
             pre_cache_mask[:, :, :, self.pre_cache_length:] = paddle.tril(paddle.ones(shape=[config.batch_size, 1, config.src_length, config.src_length], dtype=self.dtype))
             self.inputs["src_mask"] = (pre_cache_mask - 1) * 1e4
-
+        else:
+            self.attention_mask = np.zeros(shape=(config.batch_size, 1, config.total_max_length, config.total_max_length), dtype=config.dtype)
+            self.inputs["src_mask"] = paddle.zeros(shape=(config.batch_size, 1, config.total_max_length, config.total_max_length), dtype=config.dtype)
         if config.use_cachekv_int8 == "dynamic":
             self.k_quant_scales = [
                 paddle.zeros([self.num_attention_heads], dtype="float32") for _ in range(self.num_layers)
@@ -882,6 +884,9 @@ class DygraphBlockInferencePredictor(BasePredictor):
                 bi_now = self.free_list.pop()
                 self.used_list[i].append(bi_now)
                 self.inputs["block_tables"][i : i + 1, bi] = bi_now
+            self.attention_mask[i, 0, :length, :length] = np.tril(np.ones(shape=(length, length), dtype=self.config.dtype))
+        self.inputs["src_mask"].get_tensor().set(self.attention_mask, paddle.base.framework._current_expected_place())
+        self.inputs["src_mask"] = (self.inputs["src_mask"] - 1) * 1e4
 
 
 class StaticBlockInferencePredictor(BasePredictor):
@@ -915,6 +920,9 @@ class StaticBlockInferencePredictor(BasePredictor):
             pre_cache_mask[:, :, :, :self.pre_cache_length] = 1
             pre_cache_mask[:, :, :, self.pre_cache_length:] = paddle.tril(paddle.ones(shape=[config.batch_size, 1, config.src_length, config.src_length], dtype=config.dtype))
             self.inputs["src_mask"] = (pre_cache_mask - 1) * 1e4
+        else:
+            self.attention_mask = np.zeros(shape=(config.batch_size, 1, config.total_max_length, config.total_max_length), dtype=config.dtype)
+            self.inputs["src_mask"] = paddle.zeros(shape=(config.batch_size, 1, config.total_max_length, config.total_max_length), dtype=config.dtype)
 
         self.cache_kvs = {}
         if config.use_cachekv_int8 == "dynamic" or config.use_cachekv_int8 == "static":
@@ -1143,6 +1151,9 @@ class StaticBlockInferencePredictor(BasePredictor):
 
             # encoder_block_num = len(task['block_tables'])
             self.inputs['encoder_block_lens'][i:i+1] = need_block_nums
+            self.attention_mask[i, 0, :length, :length] = np.tril(np.ones(shape=(length, length), dtype=self.config.dtype))
+        self.inputs["src_mask"].get_tensor().set(self.attention_mask, paddle.base.framework._current_expected_place())
+        self.inputs["src_mask"] = (self.inputs["src_mask"] - 1) * 1e4
 
 def get_ptq_multicards_num(directory):
     count = 0  

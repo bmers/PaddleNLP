@@ -1233,7 +1233,7 @@ class LlamaForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, LlamaPr
     ):
         outputs = self.llama(
             input_ids,
-            src_mask=src_mask,
+            attention_mask=src_mask,
             caches=caches,
             rope_emb=rope_emb,
             block_tables=block_tables,

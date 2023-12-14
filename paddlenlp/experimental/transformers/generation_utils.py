@@ -502,7 +502,7 @@ class GenerationBlockInferenceModel(GenerationMixin):
         if export_precache:
             src_mask_spec = paddle.static.InputSpec(shape=[None, 1, None, None], dtype=dtype, name="src_mask")
         else :
-            src_mask_spec = None
+            src_mask_spec = paddle.static.InputSpec(shape=[None, 1, None, None], dtype=dtype, name="src_mask")
         input_spec = [
             paddle.static.InputSpec(shape=[None, None], dtype="int64", name="input_ids"),  # input_ids
             paddle.static.InputSpec(shape=[None, 1], dtype="float32", name="temperature"),  # temperature

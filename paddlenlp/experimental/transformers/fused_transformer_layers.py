@@ -1478,7 +1478,10 @@ class FusedBlockMultiTransformerA8W8(FusedBlockMultiTransformer, FusedMultiTrans
         v_quant_scales = kwargs.get("v_quant_scales", None)
         k_dequant_scales = kwargs.get("k_dequant_scales", None)
         v_dequant_scales = kwargs.get("v_dequant_scales", None)
-        
+
+        cos_table = kwargs.get("cos_table", None) # npu
+        sin_table = kwargs.get("sin_table", None) # npu
+
         if not self.config.use_dynamic_cachekv_quant:
             k_quant_scales = self.cache_k_scales
             v_quant_scales = self.cache_v_scales
@@ -1509,9 +1512,9 @@ class FusedBlockMultiTransformerA8W8(FusedBlockMultiTransformer, FusedMultiTrans
                 self.qkv_biases[i] if len(self.qkv_biases) > 0 else None,
                 self.linear_shifts[i] if len(self.linear_shifts) > 0 else None,
                 self.linear_smooths[i] if len(self.linear_smooths) > 0 else None,
-                rotary_embs,
+                cos_table, # rotary_embs,
                 attn_mask,
-                kwargs.get("tgt_mask", None),
+                sin_table, # kwargs.get("tgt_mask", None),  TODO 为了不修改算子，借用tgt_mask传一下sin_table
                 kwargs.get("max_input_length", -1),
                 kwargs.get("block_size", 64),
                 self.use_neox_rotary_style,

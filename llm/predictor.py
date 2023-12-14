@@ -25,7 +25,11 @@ import numpy as np
 import paddle
 import paddle.distributed.fleet.base.topology as tp
 from paddle.distributed import fleet
-from paddlenlp_ops import reset_stop_value
+# from paddlenlp_ops import reset_stop_value
+from paddle_custom_device.npu import (
+    reset_stop_value,
+)
+
 from utils import (
     dybatch_preprocess,
     get_alibi_slopes,
@@ -776,7 +780,7 @@ class DygraphBlockInferencePredictor(BasePredictor):
         )
         self.inputs["stop_nums"] = paddle.full(shape=[1], fill_value=config.batch_size, dtype="int64")
         tmp_position_ids = paddle.arange(self.total_max_length).reshape((1, -1))
-        self.inputs["rope_emb"] = self._get_rotary_position_embedding(tmp_position_ids, self.head_dim)
+        self.inputs["cos_tables"], self.inputs["sin_tables"], self.inputs["rope_emb"] = self._get_rotary_position_embedding(tmp_position_ids, self.head_dim)
         self.inputs["eos_token_id"] = paddle.to_tensor(
             [
                 self.tokenizer.eos_token_id,
@@ -811,6 +815,7 @@ class DygraphBlockInferencePredictor(BasePredictor):
         self.inputs['used_list_len'] = paddle.full(shape=[config.batch_size], fill_value=0, dtype="int32")
         self.inputs['free_list'] = paddle.to_tensor(free_list, dtype="int32")
         self.inputs['free_list_len'] = paddle.full(shape=[1], fill_value=pre_max_block_num * 0.25, dtype="int32")
+        self.inputs['is_decoder'] = paddle.full(shape=[1], fill_value=False, dtype="bool")
 
         self.free_list = [i for i in range(self.max_block_nums)][::-1]
         self.used_list = [[] for _ in range(config.batch_size)]
@@ -835,11 +840,15 @@ class DygraphBlockInferencePredictor(BasePredictor):
         # shape: [B, S, D/2]
         freqs = paddle.einsum("ij,k->ijk", position_ids.cast("float32"), inv_freq)
         # shape: [B, S, 1, D]
-        emb = paddle.concat([freqs, freqs], axis=-1).reshape((bsz, max_seq_len, 1, head_dim))
+        emb = paddle.concat([freqs, freqs], axis=-1).reshape((bsz, max_seq_len, 1, head_dim)).cast("float16")
 
-        rot_emb[0] = paddle.cos(emb)
-        rot_emb[1] = paddle.sin(emb)
-        return rot_emb
+        cos_table = paddle.cos(emb)
+        sin_table = paddle.sin(emb)
+        rot_emb[0] = cos_table
+        rot_emb[1] = cos_table
+        cos_table = paddle.squeeze(cos_table)
+        sin_table = paddle.squeeze(sin_table)
+        return cos_table, sin_table, rot_emb
 
     @paddle.no_grad()
     def _infer(self, inputs: dict[str, paddle.Tensor]):
@@ -857,14 +866,21 @@ class DygraphBlockInferencePredictor(BasePredictor):
             self.free_list.extend(self.used_list[i])
             self.used_list[i] = []
         reset_stop_value(self.inputs["not_need_stop"])
+        false_decoder = paddle.full(shape=[1, 1], dtype="bool", fill_value=False)
+        paddle.assign(false_decoder, self.inputs["is_decoder"])
         return
 
     def _preprocess(self, source):
+        seq_len = []
+        max_len = 0
         for i, text in enumerate(source):
             print("text: ", text)
             tokens = self.tokenizer(text, return_tensors="np", padding=False, max_length=self.config.src_length)
             input_ids = tokens["input_ids"][0]
             length = len(input_ids)
+            seq_len.append(length)
+            if (max_len < length):
+                max_len = length
             print("input_ids: ", input_ids)
             print("length: ", length)
             self.inputs["input_ids"][i : i + 1, :length] = input_ids
@@ -887,6 +903,17 @@ class DygraphBlockInferencePredictor(BasePredictor):
             self.attention_mask[i, 0, :length, :length] = np.tril(np.ones(shape=(length, length), dtype=self.config.dtype))
         self.inputs["src_mask"].get_tensor().set(self.attention_mask, paddle.base.framework._current_expected_place())
         self.inputs["src_mask"] = (self.inputs["src_mask"] - 1) * 1e4
+        position_ids = np.arange(sum(seq_len), dtype="int64")
+        pre_len = seq_len[0]
+        for length in seq_len[1:]:
+            position_ids[pre_len : length + pre_len] = position_ids[pre_len : length + pre_len] - pre_len
+            pre_len += length
+        self.inputs["position_ids"] = paddle.to_tensor(position_ids)
+
+        tgt_pos = []
+        for i, valid_len in enumerate(seq_len):
+            tgt_pos.append(valid_len - 1)
+        self.inputs["tgt_pos"] = paddle.to_tensor(np.array(tgt_pos).astype("int64").reshape(-1, 1))
 
 
 class StaticBlockInferencePredictor(BasePredictor):
@@ -971,7 +998,7 @@ class StaticBlockInferencePredictor(BasePredictor):
 
         self.inputs["stop_nums"] = paddle.full(shape=[1], fill_value=config.batch_size, dtype="int64")
         tmp_position_ids = paddle.arange(self.total_max_length).reshape((1, -1))
-        self.inputs["rope_emb"] = self._get_rotary_position_embedding(tmp_position_ids, self.head_dim)
+        self.inputs["cos_tables"], self.inputs["sin_tables"], self.inputs["rope_emb"] = self._get_rotary_position_embedding(tmp_position_ids, self.head_dim)
         self.inputs["eos_token_id"] = paddle.to_tensor(
             [
                 self.tokenizer.eos_token_id,
@@ -1008,7 +1035,7 @@ class StaticBlockInferencePredictor(BasePredictor):
         self.inputs['used_list_len'] = paddle.full(shape=[config.batch_size], fill_value=0, dtype="int32")
         self.inputs['free_list'] = paddle.to_tensor(free_list, dtype="int32")
         self.inputs['free_list_len'] = paddle.full(shape=[1], fill_value=pre_max_block_num * 0.25, dtype="int32")
-
+        self.inputs['is_decoder'] = paddle.full(shape=[1], fill_value=False, dtype="bool")
 
 
         for i in range(self.num_layers):
@@ -1024,7 +1051,6 @@ class StaticBlockInferencePredictor(BasePredictor):
         self._create_predictor(config)
         self.input_names = self.predictor.get_input_names()
 
-        self._share_data()
         self.seq_lens_handle = self.predictor.get_input_handle("seq_lens_this_time")
 
     def _get_rotary_position_embedding(self, position_ids, head_dim):
@@ -1045,11 +1071,15 @@ class StaticBlockInferencePredictor(BasePredictor):
         # shape: [B, S, D/2]
         freqs = paddle.einsum("ij,k->ijk", position_ids.cast("float32"), inv_freq)
         # shape: [B, S, 1, D]
-        emb = paddle.concat([freqs, freqs], axis=-1).reshape((bsz, max_seq_len, 1, head_dim))
+        emb = paddle.concat([freqs, freqs], axis=-1).reshape((bsz, max_seq_len, 1, head_dim)).cast("float16")
 
-        rot_emb[0] = paddle.cos(emb)
-        rot_emb[1] = paddle.sin(emb)
-        return rot_emb
+        cos_table = paddle.cos(emb)
+        sin_table = paddle.sin(emb)
+        rot_emb[0] = cos_table
+        rot_emb[1] = cos_table
+        cos_table = paddle.squeeze(cos_table)
+        sin_table = paddle.squeeze(sin_table)
+        return cos_table, sin_table, rot_emb
 
     def _create_predictor(self, predictor_args: PredictorArgument):
         if not is_paddlenlp_ops_available():
@@ -1119,14 +1149,21 @@ class StaticBlockInferencePredictor(BasePredictor):
             self.free_list.extend(self.used_list[i])
             self.used_list[i] = []
         reset_stop_value(self.inputs["not_need_stop"])
+        false_decoder = paddle.full(shape=[1, 1], dtype="bool", fill_value=False)
+        paddle.assign(false_decoder, self.inputs["is_decoder"])
         return
 
     def _preprocess(self, source):
+        seq_len = []
+        max_len = 0
         for i, text in enumerate(source):
             # print("text: ", text)
             tokens = self.tokenizer(text, return_tensors="np", padding=False, max_length=(self.config.src_length - self.config.max_length))
             input_ids = tokens["input_ids"][0]
             length = len(input_ids)
+            seq_len.append(length)
+            if (max_len < length):
+                max_len = length
             # print("input_ids: ", input_ids)
             print("length: ", length)
             self.inputs["input_ids"][i : i + 1, :length] = input_ids
@@ -1140,7 +1177,7 @@ class StaticBlockInferencePredictor(BasePredictor):
             self.inputs["seq_lens_encoder"][i : i + 1] = length
             self.inputs["seq_lens_decoder"][i : i + 1] = 0
             self.inputs["step_idx"][i : i + 1] = 0
-            self.inputs["stop_flags"][i : i + 1] = False
+            # self.inputs["stop_flags"][i : i + 1] = False
             reset_stop_value(self.inputs["not_need_stop"])
             need_block_nums = (length + self.config.max_length + self.pre_cache_length + self.block_size - 1) // self.block_size
             # print("self.free_list",  self.free_list)
@@ -1154,6 +1191,20 @@ class StaticBlockInferencePredictor(BasePredictor):
             self.attention_mask[i, 0, :length, :length] = np.tril(np.ones(shape=(length, length), dtype=self.config.dtype))
         self.inputs["src_mask"].get_tensor().set(self.attention_mask, paddle.base.framework._current_expected_place())
         self.inputs["src_mask"] = (self.inputs["src_mask"] - 1) * 1e4
+        position_ids = np.arange(sum(seq_len), dtype="int64")
+        pre_len = seq_len[0]
+        for length in seq_len[1:]:
+            position_ids[pre_len : length + pre_len] = position_ids[pre_len : length + pre_len] - pre_len
+            pre_len += length
+        self.inputs["position_ids"] = paddle.to_tensor(position_ids)
+
+        tgt_pos = []
+        for i, valid_len in enumerate(seq_len):
+            tgt_pos.append(valid_len - 1)
+        self.inputs["tgt_pos"] = paddle.to_tensor(np.array(tgt_pos).astype("int64").reshape(-1, 1))
+
+        self.inputs["stop_flags"] = paddle.full(shape=[self.config.batch_size, 1], fill_value=False, dtype="bool") # 规避setvalue不支持bool类型
+        self._share_data() # TODO：如何init阶段完成
 
 def get_ptq_multicards_num(directory):
     count = 0  

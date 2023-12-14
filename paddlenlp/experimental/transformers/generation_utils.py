@@ -522,6 +522,17 @@ class GenerationBlockInferenceModel(GenerationMixin):
             paddle.static.InputSpec(
                 shape=[2, None, self.config.max_seq_len, None, None], dtype="float32", name="rope_emb"
             ),  # rope_emb
+            #############
+            paddle.static.InputSpec(
+                shape=[None, self.config.max_seq_len, None, None], dtype="float16", name="cos_tables"
+            ),  # cos_tables
+            paddle.static.InputSpec(
+                shape=[None, self.config.max_seq_len, None, None], dtype="float16", name="sin_tables"
+            ),  # sin_tables
+            paddle.static.InputSpec(shape=[None, None], dtype="int64", name="position_ids"),  # position_ids
+            paddle.static.InputSpec(shape=[None, 1], dtype="int64", name="tgt_pos"),  # tgt_pos
+            paddle.static.InputSpec(shape=[1, 1], dtype="bool", name="is_decoder"),
+            #############
             paddle.static.InputSpec(shape=[None, 1], dtype="int64", name="min_length"),  # min_dec_len
             paddle.static.InputSpec(shape=[None, 1], dtype="int64", name="max_length"),  # max_dec_len
             paddle.static.InputSpec(shape=[1, 1], dtype="int64", name="stop_nums"),  # stop_nums
@@ -572,6 +583,11 @@ class GenerationBlockInferenceModel(GenerationMixin):
         step_idx=None,
         stop_flags=None,
         rope_emb=None,
+        cos_tables=None, # npu
+        sin_tables=None, # npu
+        position_ids=None, # npu
+        tgt_pos=None, # npu
+        is_decoder=None, # npu
         min_length=None,
         max_length=None,
         stop_nums=None,
@@ -601,6 +617,11 @@ class GenerationBlockInferenceModel(GenerationMixin):
         model_kwargs["max_dec_len"] = max_length
         model_kwargs["stop_nums"] = stop_nums
         model_kwargs["rope_emb"] = rope_emb
+        model_kwargs["cos_tables"] = cos_tables # npu
+        model_kwargs["sin_tables"] = sin_tables # npu
+        model_kwargs["position_ids"] = position_ids # npu
+        model_kwargs["tgt_pos"] = tgt_pos # npu
+        model_kwargs["is_decoder"] = is_decoder # npu
         model_kwargs["bad_tokens"] = bad_tokens
         model_kwargs["block_tables"] = block_tables
         model_kwargs["pre_ids"] = pre_ids
@@ -708,6 +729,10 @@ class GenerationBlockInferenceModel(GenerationMixin):
                 model_kwargs["is_block_step"]
             )
             save_output(next_tokens, model_kwargs["not_need_stop"], self.config.tensor_parallel_rank)
+
+            true_decoder = paddle.full(shape=[1, 1], dtype="bool", fill_value=True)
+            paddle.assign(true_decoder, model_kwargs["is_decoder"])
+            model_kwargs["tgt_pos"] = paddle.where(model_kwargs["stop_flags"], model_kwargs["tgt_pos"], model_kwargs["tgt_pos"] + 1)
             return next_tokens
 
         # encoder

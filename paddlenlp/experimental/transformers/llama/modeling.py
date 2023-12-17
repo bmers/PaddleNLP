@@ -31,7 +31,7 @@ from paddle_custom_device.npu import (
     get_padding_offset_v2,
 )
 from paddlenlp.utils.log import logger
-
+from paddle_custom_device.npu import atb_gather
 
 from paddlenlp.experimental.model_utils import ActScalesLoader, WeightScalesLoader, CacheScaleLoader
 from paddlenlp.experimental.transformers.fused_transformer_layers import (
@@ -1183,12 +1183,20 @@ class LlamaForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, LlamaPr
 
     def prepare_inputs_for_generation(self, **kwargs):
         # only last token for inputs_ids if cache is defined in kwargs
+        position_ids = kwargs.get("position_ids", None) # npu
         input_ids = kwargs["input_ids"]
         src_mask = kwargs.get("src_mask", None)
         block_tables = kwargs.get("block_tables", None)
 
         pre_caches = kwargs.get("pre_caches", None)
         caches = kwargs.get("caches", None)
+
+        is_decoder = kwargs.get("is_decoder", None)
+        tgt_pos = kwargs.get("tgt_pos", None)
+        if is_decoder:
+            position_ids = tgt_pos
+        cos_tables = kwargs["cos_tables"]
+        sin_tables = kwargs["sin_tables"]
 
         rope_emb = kwargs["rope_emb"]
         seq_lens_this_time = kwargs["seq_lens_this_time"]
@@ -1202,6 +1210,9 @@ class LlamaForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, LlamaPr
             "input_ids": input_ids,
             "src_mask": src_mask,
             "rope_emb": rope_emb,
+            "cos_tables": cos_tables, # npu
+            "sin_tables": sin_tables, # npu
+            "position_ids":position_ids, # npu
             "pre_caches": pre_caches,
             "caches": caches,
             "seq_lens_this_time": seq_lens_this_time,
@@ -1225,6 +1236,9 @@ class LlamaForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, LlamaPr
         seq_lens_encoder=None,
         seq_lens_decoder=None,
         rope_emb=None,
+        cos_tables=None,   # npu
+        sin_tables=None,   # npu
+        position_ids=None, # npu
         block_tables=None,
         k_quant_scales=None,
         v_quant_scales=None,
@@ -1233,9 +1247,11 @@ class LlamaForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, LlamaPr
     ):
         outputs = self.llama(
             input_ids,
-            src_mask=src_mask,
+            attention_mask=src_mask,
             caches=caches,
             rope_emb=rope_emb,
+            cos_table=atb_gather(position_ids, cos_tables), # npu
+            sin_table=atb_gather(position_ids, sin_tables), # npu
             block_tables=block_tables,
             pre_caches=pre_caches,
             seq_lens_this_time=seq_lens_this_time,

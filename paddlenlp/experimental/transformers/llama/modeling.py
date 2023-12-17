@@ -60,6 +60,13 @@ from paddlenlp.transformers.model_utils import (
 
 __all__ = ["LlamaInferenceModel", "LlamaForCausalLMInferenceModel", "LlamaForCausalLMBlockInferenceModel", "LlamaForMiniGPT4InferenceModel"]
 
+def process_deq_scale(deq_scale) -> np.ndarray:
+    print(deq_scale)
+    arr = deq_scale.numpy()
+    print(arr)
+    new_deq_scale = np.frombuffer(arr.tobytes(), dtype=np.uint32)
+    result = paddle.to_tensor(new_deq_scale.astype(np.int64))
+    return result
 
 class FusedLlamaRMSNorm(nn.Layer):
     def __init__(self, config):
@@ -725,7 +732,7 @@ class LlamaInferenceModel(LlamaPretrainedModel):
 
                             if self.config.tensor_parallel_degree > 1 and self.config.single_card_ptq:
                                 tmp = tmp.reshape([3, self.num_attention_heads, head_size]).split(self.config.tensor_parallel_degree, axis=1)[self.config.tensor_parallel_rank].reshape([-1])
-                            self.transformer_block.qkv_out_scales[i_layer].set_value(tmp)
+                            self.transformer_block.qkv_out_scales[i_layer].set_value(process_deq_scale(tmp))
                         pass
                     elif "out_linear_" in k:
                         for i_layer, weight_scale in enumerate(v):
@@ -733,7 +740,7 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                                     weight_scale
                                     / (127.0 * 127.0 * act_scale_loader.scale["out_linear_in_scale"][i_layer])
                                 )
-                            self.transformer_block.linear_out_scales[i_layer].set_value(tmp)
+                            self.transformer_block.linear_out_scales[i_layer].set_value(process_deq_scale(tmp))
                     elif "ffn1_weight_scale" in k:
                         for i_layer, weight_scale in enumerate(v):
                             tmp = paddle.to_tensor(
@@ -743,14 +750,15 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                                 tmp = paddle.split(tmp, self.config.tensor_parallel_degree * 2)
                                 tmp = paddle.concat([tmp[self.config.tensor_parallel_rank], tmp[self.config.tensor_parallel_rank + self.config.tensor_parallel_degree]], axis=0)
                             self.transformer_block.ffn1_out_scales[i_layer].set_value(
-                                tmp
+                                process_deq_scale(tmp)
                             )
                     elif "ffn2" in k:
                         for i_layer, weight_scale in enumerate(v):
-                            self.transformer_block.ffn2_out_scales[i_layer].set_value(
-                                paddle.to_tensor(
+                            tmp = paddle.to_tensor(
                                     weight_scale / (127.0 * 127.0 * act_scale_loader.scale["ffn2_in_scale"][i_layer])
                                 )
+                            self.transformer_block.ffn2_out_scales[i_layer].set_value(
+                                process_deq_scale(tmp)
                             )
 
 @register_base_model

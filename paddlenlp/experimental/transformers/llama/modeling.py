@@ -25,7 +25,7 @@ from functools import partial
 from paddle import nn
 from paddle.distributed import fleet
 from paddle.nn.quant import weight_quantize
-from paddlenlp_ops import (
+from paddle_custom_device.npu import (
     fused_get_rotary_embedding,
     get_padding_offset,
     get_padding_offset_v2,

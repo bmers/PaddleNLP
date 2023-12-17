@@ -29,7 +29,6 @@ from paddle.distributed import fleet
 from paddle_custom_device.npu import (
     reset_stop_value,
 )
-
 from utils import (
     dybatch_preprocess,
     get_alibi_slopes,
@@ -53,7 +52,7 @@ from paddlenlp.transformers import (
 )
 from paddlenlp.utils.import_utils import import_module, is_paddlenlp_ops_available
 from paddlenlp.utils.log import logger
-
+import paddle_custom_device.npu.passes as passes
 
 @dataclass
 class PredictorArgument:
@@ -65,7 +64,7 @@ class PredictorArgument:
     top_p: float = field(default=0.7, metadata={"help": "top_p parameter for generation"})
     temperature: float = field(default=0.95, metadata={"help": "top_p parameter for generation"})
     repetition_penalty: float = field(default=1.0, metadata={"help": "repetition penalty parameter for generation"})
-    device: str = field(default="gpu", metadata={"help": "Device"})
+    device: str = field(default="npu", metadata={"help": "Device"})
     dtype: str = field(default=None, metadata={"help": "Model dtype"})
     lora_path: str = field(default=None, metadata={"help": "The directory of LoRA parameters. Default to None"})
     export_precache: bool = field(default=False, metadata={"help": "whether use prefix weight to do infer"})
@@ -1082,22 +1081,27 @@ class StaticBlockInferencePredictor(BasePredictor):
         return cos_table, sin_table, rot_emb
 
     def _create_predictor(self, predictor_args: PredictorArgument):
-        if not is_paddlenlp_ops_available():
-            raise ValueError(
-                "you should install the paddlenlp ops to run inference predictor, "
-                "https://github.com/PaddlePaddle/PaddleNLP/blob/develop/csrc/README.md"
-            )
+        # if not is_paddlenlp_ops_available():
+        #     raise ValueError(
+        #         "you should install the paddlenlp ops to run inference predictor, "
+        #         "https://github.com/PaddlePaddle/PaddleNLP/blob/develop/csrc/README.md"
+        #     )
 
         infer_model_path = get_infer_model_path(predictor_args.model_name_or_path, predictor_args.model_prefix)
 
         config = paddle.inference.Config(infer_model_path + ".pdmodel", infer_model_path + ".pdiparams")
 
-        config.switch_ir_optim(False)
-        device_id = int(os.environ.get("FLAGS_selected_gpus", 0))
-        config.enable_use_gpu(100, device_id)
+        config.switch_ir_optim(True)
+        device_id = int(os.environ.get("FLAGS_selected_npus", 0))
+        config.enable_custom_device("npu", device_id)
         # config.disable_glog_info()
-        # config.enable_memory_optim()
+        config.enable_memory_optim()
 
+        config.set_optim_cache_dir("./optim_cache")
+        pass_builder = config.pass_builder()
+        passes.addPasses(pass_builder, "llama13B_mp2")
+        pass_builder.turn_on_debug()
+        
         if self.tensor_parallel_degree >= 1:
             trainer_endpoints = fleet.worker_endpoints()
             current_endpoint = trainer_endpoints[self.tensor_parallel_rank]

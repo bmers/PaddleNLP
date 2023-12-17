@@ -19,7 +19,7 @@ import paddle
 import paddle.distributed.fleet as fleet
 import paddle.nn as nn
 from paddle.nn.quant import weight_quantize
-from paddlenlp_ops import get_padding_offset
+# from paddlenlp_ops import get_padding_offset
 
 from paddlenlp.experimental.transformers.fused_transformer_layers import (
     FusedMultiTransformerBase,

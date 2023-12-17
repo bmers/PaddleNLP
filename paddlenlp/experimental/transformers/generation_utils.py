@@ -18,10 +18,10 @@ from typing import List, Union
 
 import paddle
 import paddle.nn.functional as F
-from paddlenlp_ops import (
+from paddle_custom_device.npu import (
     save_output,
     save_with_output,
-    set_alibi_mask_value,
+    # set_alibi_mask_value,
     set_mask_value,
     set_value_by_flags_and_idx,
     set_stop_value_multi_ends,
@@ -37,7 +37,7 @@ from paddlenlp.generation import GenerationMixin, LogitsProcessor, LogitsProcess
 try:
     from paddle import top_p_sampling
 except:
-    from paddlenlp_ops import top_p_sampling
+    from paddle_custom_device.npu import top_p_sampling
 
 
 __all__ = ["GenerationInferenceModel", "GenerationBlockInferenceModel"]

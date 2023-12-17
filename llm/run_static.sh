@@ -23,7 +23,19 @@ export FLAGS_allocator_strategy=naive_best_fit
 export FLAGS_fraction_of_gpu_memory_to_use=0.92
 
 
-model_dir=${1:-"checkpoints/llama65b_ptq_smooth_mp8"}
+# model_dir=${1:-"meta-llama/Llama-2-7b-chat"}
+
+use_device="0,1"
+use_device_="8,9"
+
+log_dir=mp8
+rm -rf $log_dir
+
+# use_device="0"
+export ASCEND_RT_VISIBLE_DEVICES=$use_device
+
+model_dir="/home/data/dataset/llama-65b/llama_ptq_ckpts_smooth_all_shift_mp2_13b"
+
 src_len=${2:-1100}
 dec_len=${3:-330}
 quant_type=${4:-"a8w8"}
@@ -31,9 +43,10 @@ quant_type=${4:-"a8w8"}
 total_len=`expr ${src_len} + ${dec_len}`
 
 python -m paddle.distributed.launch \
-    --gpus "0,1,2,3,4,5,6,7" \
+    --log_dir $log_dir \
+    --devices $use_device \
     predictor.py \
-    --model_name_or_path ./inference_model/${model_dir} \
+    --model_name_or_path $model_dir \
     --dtype float16 \
     --src_length ${total_len} \
     --max_length ${dec_len} \

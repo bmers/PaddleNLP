@@ -29,23 +29,23 @@ from paddle.nn.quant import weight_only_linear
 from paddlenlp.utils.import_utils import is_paddlenlp_ops_available
 from paddlenlp.utils.log import logger
 
-if is_paddlenlp_ops_available():
-    from paddlenlp_ops import (
-        dequant_int8,
-        encode_rotary_qk,
-        qkv_transpose_split,
-        quant_int8,
-        rebuild_padding,
-        transpose_remove_padding,
-        write_cache_kv,
-        get_max_len,
-        rebuild_padding_v2,
-    )
-else:
-    logger.warning(
-        "The paddlenlp_ops package is not installed. you can read the docs and install it by hand, "
-        "you can refer to: https://github.com/PaddlePaddle/PaddleNLP/blob/develop/csrc/README.md"
-    )
+# if is_paddlenlp_ops_available():
+from paddle_custom_device.npu import (
+    dequant_int8,
+    encode_rotary_qk,
+    qkv_transpose_split,
+    quant_int8,
+    # rebuild_padding,
+    transpose_remove_padding,
+    write_cache_kv,
+    get_max_len,
+    rebuild_padding_v2,
+)
+# else:
+#     logger.warning(
+#         "The paddlenlp_ops package is not installed. you can read the docs and install it by hand, "
+#         "you can refer to: https://github.com/PaddlePaddle/PaddleNLP/blob/develop/csrc/README.md"
+#     )
 
 
 __all__ = [

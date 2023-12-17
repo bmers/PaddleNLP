@@ -1076,28 +1076,28 @@ class FusedMultiTransformerA8W8(FusedMultiTransformerBase):
             qkv_out_scale = self.create_parameter(
                 shape=[self.head_dim * 3 * self.num_heads],
                 attr=qkv_out_scale_attr,
-                dtype="float32",
+                dtype="int64",
                 is_bias=False,
                 default_initializer=paddle.nn.initializer.Constant(0),
             )
             linear_out_scale = self.create_parameter(
                 shape=[self.embed_dim],
                 attr=linear_out_scale_attr,
-                dtype="float32",
+                dtype="int64",
                 is_bias=False,
                 default_initializer=paddle.nn.initializer.Constant(0),
             )
             ffn1_out_scale = self.create_parameter(
                 shape=[self.dim_feedforward * 2] if self.activation.endswith("glu") else [self.dim_feedforward],
                 attr=ffn1_out_scale_attr,
-                dtype="float32",
+                dtype="int64",
                 is_bias=False,
                 default_initializer=paddle.nn.initializer.Constant(0),
             )
             ffn2_out_scale = self.create_parameter(
                 shape=[self.embed_dim],
                 attr=ffn2_out_scale_attr,
-                dtype="float32",
+                dtype="int64",
                 is_bias=False,
                 default_initializer=paddle.nn.initializer.Constant(0),
             )

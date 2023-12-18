@@ -777,7 +777,7 @@ class LlamaBlockInferenceModel(LlamaInferenceModel):
             self.transformer_block = FusedBlockMultiTransformer(transformer_config)
 
     def remove_padding(self, input_ids, seq_lens_this_time):
-        cum_offsets_now = paddle.cumsum(self.max_seq_len - seq_lens_this_time)
+        cum_offsets_now = paddle.cumsum(input_ids.shape[-1] - seq_lens_this_time)
         token_num = paddle.sum(seq_lens_this_time)
         ids_remove_padding, cum_offsets, padding_offset, cu_seqlens_q, cu_seqlens_k = get_padding_offset_v2(
             input_ids, cum_offsets_now, token_num, seq_lens_this_time

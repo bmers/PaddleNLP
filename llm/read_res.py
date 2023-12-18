@@ -1,5 +1,9 @@
 import paddle
-from paddlenlp_ops import get_output
+# from paddlenlp_ops import get_output
+from paddle_custom_device.npu import (
+    get_output,
+)
+
 from dataclasses import dataclass, field
 from paddlenlp.trainer import PdArgumentParser
 import numpy as np

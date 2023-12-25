@@ -946,9 +946,9 @@ class StaticBlockInferencePredictor(BasePredictor):
             pre_cache_mask[:, :, :, :self.pre_cache_length] = 1
             pre_cache_mask[:, :, :, self.pre_cache_length:] = paddle.tril(paddle.ones(shape=[config.batch_size, 1, config.src_length, config.src_length], dtype=config.dtype))
             self.inputs["src_mask"] = (pre_cache_mask - 1) * 1e4
-        else:
-            self.attention_mask = np.zeros(shape=(config.batch_size, 1, config.total_max_length, config.total_max_length), dtype=config.dtype)
-            self.inputs["src_mask"] = paddle.zeros(shape=(config.batch_size, 1, config.total_max_length, config.total_max_length), dtype=config.dtype)
+        # else:
+        #     self.attention_mask = np.zeros(shape=(config.batch_size, 1, config.total_max_length, config.total_max_length), dtype=config.dtype)
+        #     self.inputs["src_mask"] = paddle.zeros(shape=(config.batch_size, 1, config.total_max_length, config.total_max_length), dtype=config.dtype)
 
         self.cache_kvs = {}
         if config.use_cachekv_int8 == "dynamic" or config.use_cachekv_int8 == "static":
@@ -1065,10 +1065,10 @@ class StaticBlockInferencePredictor(BasePredictor):
         """
         bsz, max_seq_len = position_ids.shape[:2]
         rot_emb = paddle.zeros((2, bsz, max_seq_len, 1, head_dim), dtype="float32")
-        inv_freq = 10000 ** (-paddle.arange(0, head_dim, 2, dtype="float32") / head_dim)
-
+        inv_freq = 1.0 / (10000 ** (paddle.arange(0, head_dim, 2, dtype="float32") / head_dim))
+        t = paddle.arange(max_seq_len, dtype="float32")
         # shape: [B, S, D/2]
-        freqs = paddle.einsum("ij,k->ijk", position_ids.cast("float32"), inv_freq)
+        freqs = paddle.einsum("i,j->ij", t, inv_freq)
         # shape: [B, S, 1, D]
         emb = paddle.concat([freqs, freqs], axis=-1).reshape((bsz, max_seq_len, 1, head_dim)).cast("float16")
 
@@ -1079,6 +1079,7 @@ class StaticBlockInferencePredictor(BasePredictor):
         cos_table = paddle.squeeze(cos_table)
         sin_table = paddle.squeeze(sin_table)
         return cos_table, sin_table, rot_emb
+
 
     def _create_predictor(self, predictor_args: PredictorArgument):
         # if not is_paddlenlp_ops_available():
@@ -1192,8 +1193,14 @@ class StaticBlockInferencePredictor(BasePredictor):
 
             # encoder_block_num = len(task['block_tables'])
             self.inputs['encoder_block_lens'][i:i+1] = need_block_nums
-            self.attention_mask[i, 0, :length, :length] = np.tril(np.ones(shape=(length, length), dtype=self.config.dtype))
-        self.inputs["src_mask"].get_tensor().set(self.attention_mask, paddle.base.framework._current_expected_place())
+            # self.attention_mask[i, 0, :length, :length] = np.tril(np.ones(shape=(length, length), dtype=self.config.dtype))
+        self.attention_mask = np.zeros(shape=(self.config.batch_size, max_len, max_len), dtype=self.config.dtype)
+        for i in range(len(seq_len)):
+            length = seq_len[i]
+            self.attention_mask[i, :length, :length] = np.tril(np.ones(shape=(length, length), dtype=self.config.dtype))
+        # self.inputs["src_mask"] = paddle.zeros(shape=(config.batch_size, 1, config.total_max_length, config.total_max_length), dtype=config.dtype)
+        # self.inputs["src_mask"].get_tensor().set(self.attention_mask, paddle.base.framework._current_expected_place())
+        self.inputs["src_mask"] = paddle.to_tensor(self.attention_mask)
         self.inputs["src_mask"] = (self.inputs["src_mask"] - 1) * 1e4
         position_ids = np.arange(sum(seq_len), dtype="int64")
         pre_len = seq_len[0]

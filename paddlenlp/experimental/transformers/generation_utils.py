@@ -732,7 +732,7 @@ class GenerationBlockInferenceModel(GenerationMixin):
 
             true_decoder = paddle.full(shape=[1, 1], dtype="bool", fill_value=True)
             paddle.assign(true_decoder, model_kwargs["is_decoder"])
-            model_kwargs["tgt_pos"] = paddle.where(model_kwargs["stop_flags"], model_kwargs["tgt_pos"], model_kwargs["tgt_pos"] + 1)
+            paddle.assign(paddle.where(model_kwargs["stop_flags"], model_kwargs["tgt_pos"], model_kwargs["tgt_pos"] + 1), model_kwargs["tgt_pos"])
             return next_tokens
 
         # encoder

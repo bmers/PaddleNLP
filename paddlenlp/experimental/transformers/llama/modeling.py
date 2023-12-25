@@ -61,9 +61,9 @@ from paddlenlp.transformers.model_utils import (
 __all__ = ["LlamaInferenceModel", "LlamaForCausalLMInferenceModel", "LlamaForCausalLMBlockInferenceModel", "LlamaForMiniGPT4InferenceModel"]
 
 def process_deq_scale(deq_scale) -> np.ndarray:
-    print(deq_scale)
+    # print(deq_scale)
     arr = deq_scale.numpy()
-    print(arr)
+    # print(arr)
     new_deq_scale = np.frombuffer(arr.tobytes(), dtype=np.uint32)
     result = paddle.to_tensor(new_deq_scale.astype(np.int64))
     return result
@@ -777,7 +777,7 @@ class LlamaBlockInferenceModel(LlamaInferenceModel):
             self.transformer_block = FusedBlockMultiTransformer(transformer_config)
 
     def remove_padding(self, input_ids, seq_lens_this_time):
-        cum_offsets_now = paddle.cumsum(input_ids.shape[-1] - seq_lens_this_time)
+        cum_offsets_now = paddle.cumsum(self.max_seq_len - seq_lens_this_time)
         token_num = paddle.sum(seq_lens_this_time)
         ids_remove_padding, cum_offsets, padding_offset, cu_seqlens_q, cu_seqlens_k = get_padding_offset_v2(
             input_ids, cum_offsets_now, token_num, seq_lens_this_time

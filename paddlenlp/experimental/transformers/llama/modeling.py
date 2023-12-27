@@ -713,14 +713,23 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                     )
                     for k, v in cache_scales_loader.scale.items():
                         for i_layer, weight_scale in enumerate(v):
-                            weight_scale = weight_scale.astype("float32")
                             if k == "cache_k_scale":
+                                weight_scale = 1/weight_scale
+                                weight_scale = weight_scale.astype("float16")
+                                weight_scale = np.repeat(weight_scale, 128)
                                 self.transformer_block.cache_k_scales[i_layer].set_value(weight_scale)
                             elif k == "cache_v_scale":
+                                weight_scale = 1/weight_scale
+                                weight_scale = weight_scale.astype("float16")
+                                weight_scale = np.repeat(weight_scale, 128)
                                 self.transformer_block.cache_v_scales[i_layer].set_value(weight_scale)
                             elif k == "cache_k_out_scale":
+                                weight_scale = weight_scale.astype("float16")
+                                weight_scale = np.repeat(weight_scale, 128)
                                 self.transformer_block.cache_k_out_scales[i_layer].set_value(weight_scale)
                             else:
+                                weight_scale = weight_scale.astype("float16")
+                                weight_scale = np.repeat(weight_scale, 128)
                                 self.transformer_block.cache_v_out_scales[i_layer].set_value(weight_scale)
                                 
                 for k, v in weight_scales_loader.scale.items():

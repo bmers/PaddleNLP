@@ -1171,7 +1171,7 @@ class StaticBlockInferencePredictor(BasePredictor):
         top_p_tensor = paddle.to_tensor([self.config.top_p]).astype(self.inputs["top_p"].dtype)
         temperature_tensor = paddle.to_tensor([self.config.temperature]).astype(self.inputs['temperature'].dtype)
         false_tensor = paddle.to_tensor([False]).astype("bool")
-        input_ids_numpy = np.ones(shape=[self.config.batch_size, self.config.src_length], dtype="int64")
+        input_ids_numpy = np.ones(shape=[self.config.src_length], dtype="int64")
         bi_now_numpy = np.zeros(shape=[self.config.batch_size, self.pre_max_block_num], dtype="int32")
 
         for i, text in enumerate(source):
@@ -1187,8 +1187,9 @@ class StaticBlockInferencePredictor(BasePredictor):
 
             length_tensor = paddle.to_tensor([length]).astype(self.inputs['seq_lens_this_time'].dtype)
             # self.inputs["input_ids"][i : i + 1, :length] = input_ids
-            input_ids_numpy[i : i + 1, :length] = input_ids
+            input_ids_numpy[:length] = input_ids
             input_ids_tensor = paddle.to_tensor(input_ids_numpy).astype(self.inputs["input_ids"].dtype)
+            input_ids_numpy = np.ones(shape=[self.config.src_length], dtype="int64")
             atb_set_value(self.inputs["input_ids"], input_ids_tensor, [i, 0], [i + 1, self.config.src_length])
             # self.inputs["penalty_score"][i : i + 1] = self.config.repetition_penalty
             atb_set_value(self.inputs["penalty_score"], repetition_penalty_tensor, [i, 0], [i + 1, 0])

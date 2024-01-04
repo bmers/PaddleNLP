@@ -1246,6 +1246,7 @@ class StaticBlockInferencePredictor(BasePredictor):
         for i, valid_len in enumerate(seq_len):
             tgt_pos.append(valid_len - 1)
         self.inputs["tgt_pos"] = paddle.to_tensor(np.array(tgt_pos).astype("int64").reshape(-1, 1))
+        self.inputs["tgt_pos_new"] = paddle.to_tensor(np.array(tgt_pos).astype("int64").reshape(-1, 1))
 
         self._share_data() # TODO：如何init阶段完成
 

@@ -1209,9 +1209,9 @@ class LlamaForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, LlamaPr
         caches = kwargs.get("caches", None)
 
         is_decoder = kwargs.get("is_decoder", None)
-        tgt_pos = kwargs.get("tgt_pos", None)
         if is_decoder:
-            position_ids = tgt_pos
+            tgt_pos_new = kwargs.get("tgt_pos_new", None)
+            position_ids = tgt_pos_new
         cos_tables = kwargs["cos_tables"]
         sin_tables = kwargs["sin_tables"]
 

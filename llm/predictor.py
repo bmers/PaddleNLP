@@ -1037,7 +1037,17 @@ class StaticBlockInferencePredictor(BasePredictor):
         self.inputs['free_list'] = paddle.to_tensor(free_list, dtype="int32")
         self.inputs['free_list_len'] = paddle.full(shape=[1], fill_value=pre_max_block_num * 0.25, dtype="int32")
         self.inputs['is_decoder'] = paddle.full(shape=[1], fill_value=False, dtype="bool")
+        self.inputs["position_ids"] = paddle.full(shape=[config.batch_size * config.src_length], fill_value=0, dtype="int64")
+        self.inputs["tgt_pos"] = paddle.full(shape=[config.batch_size, 1], fill_value=0, dtype="int64")
+        self.inputs["tgt_pos_new"] = paddle.full(shape=[config.batch_size, 1], fill_value=0, dtype="int64")
 
+        self.zero_tensor_float = paddle.to_tensor([0.0]).astype("float32")
+        self.zero_tensor_int = paddle.to_tensor([0]).astype("int32")
+        self.zero_tensor_int64 = paddle.to_tensor([0]).astype("int64")
+        self.repetition_penalty_tensor = paddle.to_tensor([self.config.repetition_penalty]).astype(self.inputs["penalty_score"].dtype)
+        self.top_p_tensor = paddle.to_tensor([self.config.top_p]).astype(self.inputs["top_p"].dtype)
+        self.temperature_tensor = paddle.to_tensor([self.config.temperature]).astype(self.inputs['temperature'].dtype)
+        self.false_tensor = paddle.to_tensor([False]).astype("bool")
 
         for i in range(self.num_layers):
             if self.config.use_cachekv_int8 == "dynamic":
@@ -1052,7 +1062,9 @@ class StaticBlockInferencePredictor(BasePredictor):
         self._create_predictor(config)
         self.input_names = self.predictor.get_input_names()
 
+        self._share_data()
         self.seq_lens_handle = self.predictor.get_input_handle("seq_lens_this_time")
+        self.position_ids_handle = self.predictor.get_input_handle("position_ids")
 
     def _get_rotary_position_embedding(self, position_ids, head_dim):
         """
@@ -1134,6 +1146,8 @@ class StaticBlockInferencePredictor(BasePredictor):
                 continue
             if "seq_lens_this_time" in name:
                 continue
+            if "position_ids" in name:
+                continue
             input_tensor = self.predictor.get_input_handle(name)
             input_tensor.share_external_data(self.inputs[name])
 
@@ -1147,7 +1161,9 @@ class StaticBlockInferencePredictor(BasePredictor):
         import copy
         seq_lens_this_time = copy.deepcopy(self.inputs["seq_lens_this_time"][:real_bsz])
         self.seq_lens_handle.share_external_data(seq_lens_this_time)
-        
+        position_ids = copy.deepcopy(self.inputs["position_ids"][:self.cur_total_seqlen])
+        self.position_ids_handle.share_external_data(position_ids)
+
         while self.inputs["not_need_stop"]:
             self.predictor.run()
 
@@ -1164,13 +1180,6 @@ class StaticBlockInferencePredictor(BasePredictor):
         seq_len = []
         max_len = 0
 
-        zero_tensor_float = paddle.to_tensor([0.0]).astype("float32")
-        zero_tensor_int = paddle.to_tensor([0]).astype("int32")
-        zero_tensor_int64 = paddle.to_tensor([0]).astype("int64")
-        repetition_penalty_tensor = paddle.to_tensor([self.config.repetition_penalty]).astype(self.inputs["penalty_score"].dtype)
-        top_p_tensor = paddle.to_tensor([self.config.top_p]).astype(self.inputs["top_p"].dtype)
-        temperature_tensor = paddle.to_tensor([self.config.temperature]).astype(self.inputs['temperature'].dtype)
-        false_tensor = paddle.to_tensor([False]).astype("bool")
         input_ids_numpy = np.ones(shape=[self.config.src_length], dtype="int64")
         bi_now_numpy = np.zeros(shape=[self.config.batch_size, self.pre_max_block_num], dtype="int32")
 
@@ -1192,15 +1201,15 @@ class StaticBlockInferencePredictor(BasePredictor):
             input_ids_numpy = np.ones(shape=[self.config.src_length], dtype="int64")
             atb_set_value(self.inputs["input_ids"], input_ids_tensor, [i, 0], [i + 1, self.config.src_length])
             # self.inputs["penalty_score"][i : i + 1] = self.config.repetition_penalty
-            atb_set_value(self.inputs["penalty_score"], repetition_penalty_tensor, [i, 0], [i + 1, 0])
+            atb_set_value(self.inputs["penalty_score"], self.repetition_penalty_tensor, [i, 0], [i + 1, 0])
             # self.inputs["frequency_score"][i : i + 1] = 0.0
-            atb_set_value(self.inputs["frequency_score"], zero_tensor_float, [i, 0], [i + 1, 0])
+            atb_set_value(self.inputs["frequency_score"], self.zero_tensor_float, [i, 0], [i + 1, 0])
             # self.inputs["presence_score"][i : i + 1] = 0.0
-            atb_set_value(self.inputs["presence_score"], zero_tensor_float, [i, 0], [i + 1, 0])
+            atb_set_value(self.inputs["presence_score"], self.zero_tensor_float, [i, 0], [i + 1, 0])
             # self.inputs['top_p'][i:i+1] = self.config.top_p
-            atb_set_value(self.inputs['top_p'], top_p_tensor, [i, 0], [i + 1, 0])
+            atb_set_value(self.inputs['top_p'], self.top_p_tensor, [i, 0], [i + 1, 0])
             # self.inputs['temperature'][i:i+1] = self.config.temperature
-            atb_set_value(self.inputs['temperature'], temperature_tensor, [i, 0], [i + 1, 0])
+            atb_set_value(self.inputs['temperature'], self.temperature_tensor, [i, 0], [i + 1, 0])
             # self.inputs["seq_lens_this_time"][i : i + 1] = length_tensor
             atb_set_value(self.inputs["seq_lens_this_time"], length_tensor, [i, 0], [i + 1, 0])
             # self.inputs['step_seq_lens_encoder'][i:i+1] = length
@@ -1208,11 +1217,11 @@ class StaticBlockInferencePredictor(BasePredictor):
             # self.inputs["seq_lens_encoder"][i : i + 1] = length
             atb_set_value(self.inputs["seq_lens_encoder"], length_tensor, [i, 0], [i + 1, 0])
             # self.inputs["seq_lens_decoder"][i : i + 1] = 0
-            atb_set_value(self.inputs["seq_lens_decoder"], zero_tensor_int, [i, 0], [i + 1, 0])
+            atb_set_value(self.inputs["seq_lens_decoder"], self.zero_tensor_int, [i, 0], [i + 1, 0])
             # self.inputs["step_idx"][i : i + 1] = 0
-            atb_set_value(self.inputs["step_idx"], zero_tensor_int64, [i, 0], [i + 1, 0])
+            atb_set_value(self.inputs["step_idx"], self.zero_tensor_int64, [i, 0], [i + 1, 0])
             # self.inputs["stop_flags"][i : i + 1] = False
-            atb_set_value(self.inputs["stop_flags"], false_tensor, [i, 0], [i + 1, 0])
+            atb_set_value(self.inputs["stop_flags"], self.false_tensor, [i, 0], [i + 1, 0])
 
             reset_stop_value(self.inputs["not_need_stop"])
             need_block_nums = (length + self.config.max_length + self.pre_cache_length + self.block_size - 1) // self.block_size
@@ -1227,20 +1236,20 @@ class StaticBlockInferencePredictor(BasePredictor):
             need_block_nums_tensor = paddle.to_tensor([need_block_nums]).astype(self.inputs['encoder_block_lens'].dtype)
             atb_set_value(self.inputs["encoder_block_lens"], need_block_nums_tensor, [i], [i + 1])
 
-        position_ids = np.arange(sum(seq_len), dtype="int64")
+        self.cur_total_seqlen = sum(seq_len)
+        position_ids = np.arange(self.cur_total_seqlen, dtype="int64")
         pre_len = seq_len[0]
         for length in seq_len[1:]:
             position_ids[pre_len : length + pre_len] = position_ids[pre_len : length + pre_len] - pre_len
             pre_len += length
-        self.inputs["position_ids"] = paddle.to_tensor(position_ids)
+        atb_set_value(self.inputs["position_ids"], paddle.to_tensor(position_ids), [0], [self.cur_total_seqlen])
 
         tgt_pos = []
         for i, valid_len in enumerate(seq_len):
             tgt_pos.append(valid_len - 1)
-        self.inputs["tgt_pos"] = paddle.to_tensor(np.array(tgt_pos).astype("int64").reshape(-1, 1))
-        self.inputs["tgt_pos_new"] = paddle.to_tensor(np.array(tgt_pos).astype("int64").reshape(-1, 1))
-
-        self._share_data() # TODO：如何init阶段完成
+        tgt_tensor = paddle.to_tensor(np.array(tgt_pos).astype("int64").reshape(-1, 1))
+        atb_set_value(self.inputs["tgt_pos_new"], tgt_tensor, [0, 0], [self.config.batch_size, 1])
+        atb_set_value(self.inputs["tgt_pos"], tgt_tensor, [0, 0], [self.config.batch_size, 1])
 
 def get_ptq_multicards_num(directory):
     count = 0  

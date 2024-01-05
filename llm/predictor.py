@@ -948,9 +948,9 @@ class StaticBlockInferencePredictor(BasePredictor):
             pre_cache_mask[:, :, :, :self.pre_cache_length] = 1
             pre_cache_mask[:, :, :, self.pre_cache_length:] = paddle.tril(paddle.ones(shape=[config.batch_size, 1, config.src_length, config.src_length], dtype=config.dtype))
             self.inputs["src_mask"] = (pre_cache_mask - 1) * 1e4
-        # else:
-        #     self.attention_mask = np.zeros(shape=(config.batch_size, 1, config.total_max_length, config.total_max_length), dtype=config.dtype)
-        #     self.inputs["src_mask"] = paddle.zeros(shape=(config.batch_size, 1, config.total_max_length, config.total_max_length), dtype=config.dtype)
+        else:
+            self.inputs["src_mask"] = paddle.tril(paddle.ones(shape=(config.total_max_length, config.total_max_length), dtype=config.dtype))
+            self.inputs["src_mask"] = (self.inputs["src_mask"] - 1) * 1e4
 
         self.cache_kvs = {}
         if config.use_cachekv_int8 == "dynamic" or config.use_cachekv_int8 == "static":
@@ -1226,15 +1226,7 @@ class StaticBlockInferencePredictor(BasePredictor):
             self.inputs['encoder_block_lens'][i:i+1] = need_block_nums
             need_block_nums_tensor = paddle.to_tensor([need_block_nums]).astype(self.inputs['encoder_block_lens'].dtype)
             atb_set_value(self.inputs["encoder_block_lens"], need_block_nums_tensor, [i], [i + 1])
-            # self.attention_mask[i, 0, :length, :length] = np.tril(np.ones(shape=(length, length), dtype=self.config.dtype))
-        self.attention_mask = np.zeros(shape=(self.config.batch_size, max_len, max_len), dtype=self.config.dtype)
-        for i in range(len(seq_len)):
-            length = seq_len[i]
-            self.attention_mask[i, :length, :length] = np.tril(np.ones(shape=(length, length), dtype=self.config.dtype))
-        # self.inputs["src_mask"] = paddle.zeros(shape=(config.batch_size, 1, config.total_max_length, config.total_max_length), dtype=config.dtype)
-        # self.inputs["src_mask"].get_tensor().set(self.attention_mask, paddle.base.framework._current_expected_place())
-        self.inputs["src_mask"] = paddle.to_tensor(self.attention_mask)
-        self.inputs["src_mask"] = (self.inputs["src_mask"] - 1) * 1e4
+
         position_ids = np.arange(sum(seq_len), dtype="int64")
         pre_len = seq_len[0]
         for length in seq_len[1:]:

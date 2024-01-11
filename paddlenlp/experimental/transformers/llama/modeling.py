@@ -29,6 +29,7 @@ from paddle_custom_device.npu import (
     fused_get_rotary_embedding,
     get_padding_offset,
     get_padding_offset_v2,
+    atb_allgather,
 )
 from paddlenlp.utils.log import logger
 from paddle_custom_device.npu import atb_gather
@@ -129,17 +130,17 @@ class LlamaInferenceModel(LlamaPretrainedModel):
                 self.quant_type
             )
 
-        if config.tensor_parallel_degree > 1:
-            self.embed_tokens = fleet.meta_parallel.VocabParallelEmbedding(
-                self.vocab_size,
-                self.hidden_size,
-                weight_attr=paddle.ParamAttr(initializer=nn.initializer.XavierNormal()),
-            )
-        else:
-            self.embed_tokens = nn.Embedding(
-                self.vocab_size,
-                self.hidden_size,
-            )
+        # if config.tensor_parallel_degree > 1:
+        #     self.embed_tokens = fleet.meta_parallel.VocabParallelEmbedding(
+        #         self.vocab_size,
+        #         self.hidden_size,
+        #         weight_attr=paddle.ParamAttr(initializer=nn.initializer.XavierNormal()),
+        #     )
+        # else:
+        self.embed_tokens = nn.Embedding(
+            self.vocab_size,
+            self.hidden_size,
+        )
 
         # get ring_id
         ring_id = -1
@@ -1164,6 +1165,11 @@ class LlamaForCausalLMBlockInferenceModel(GenerationBlockInferenceModel, LlamaPr
             model.state_dict = paddle.load(resolved_archive_file, return_numpy=True)
         else:
             model.state_dict = paddle.load(resolved_archive_file, return_numpy=True)
+        for k in model.state_dict.keys():
+            if "embed" in k :
+                print(f"[INFO]transformat_weight={k}; shape={model.state_dict[k].data.shape}")
+                temp_tensor = paddle.to_tensor(model.state_dict[k].data).astype("float16")
+                model.state_dict[k] = atb_allgather(temp_tensor).reshape([32000, 8192]).numpy()
         model.set_state_dict(model.state_dict)
 
         return model

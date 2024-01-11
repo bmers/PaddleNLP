@@ -719,6 +719,12 @@ class GenerationBlockInferenceModel(GenerationMixin):
                 model_kwargs["next_tokens"]
             )  # multi ends
             paddle.assign(stop_flags, model_kwargs["stop_flags"])
+
+            true_decoder = paddle.full(shape=[1, 1], dtype="bool", fill_value=True)
+            paddle.assign(true_decoder, model_kwargs["is_decoder"])
+            paddle.assign(paddle.where(model_kwargs["stop_flags"], model_kwargs["tgt_pos"], model_kwargs["tgt_pos"] + 1), model_kwargs["tgt_pos"])
+            paddle.assign(paddle.masked_select(model_kwargs["tgt_pos"], model_kwargs["stop_flags"].logical_not()), model_kwargs["tgt_pos_new"])
+
             # update inputs
             update_inputs(
                 model_kwargs["stop_flags"],
@@ -733,10 +739,6 @@ class GenerationBlockInferenceModel(GenerationMixin):
             )
             save_output(next_tokens, model_kwargs["not_need_stop"], self.config.tensor_parallel_rank)
 
-            true_decoder = paddle.full(shape=[1, 1], dtype="bool", fill_value=True)
-            paddle.assign(true_decoder, model_kwargs["is_decoder"])
-            paddle.assign(paddle.where(model_kwargs["stop_flags"], model_kwargs["tgt_pos"], model_kwargs["tgt_pos"] + 1), model_kwargs["tgt_pos"])
-            paddle.assign(paddle.masked_select(model_kwargs["tgt_pos"], model_kwargs["stop_flags"].logical_not()), model_kwargs["tgt_pos_new"])
             return next_tokens
 
         # encoder

@@ -1114,7 +1114,10 @@ class StaticBlockInferencePredictor(BasePredictor):
 
         config.set_optim_cache_dir("./optim_cache")
         pass_builder = config.pass_builder()
-        passes.addPasses(pass_builder, "llama13B_mp2")
+        if predictor_args.use_cachekv_int8 == "None":
+            passes.addPasses(pass_builder, "llama65B_mp8_smooth")
+        else:
+            passes.addPasses(pass_builder, "llama65B_mp8")
         pass_builder.turn_on_debug()
         
         if self.tensor_parallel_degree >= 1:
@@ -1180,8 +1183,7 @@ class StaticBlockInferencePredictor(BasePredictor):
         seq_len = []
         max_len = 0
 
-        input_ids_numpy = np.ones(shape=[self.config.src_length], dtype="int64")
-        bi_now_numpy = np.zeros(shape=[self.config.batch_size, self.pre_max_block_num], dtype="int32")
+        input_ids_numpy = np.ones(shape=[self.config.src_length], dtype="int64"
 
         for i, text in enumerate(source):
             # print("text: ", text)
@@ -1226,10 +1228,13 @@ class StaticBlockInferencePredictor(BasePredictor):
             reset_stop_value(self.inputs["not_need_stop"])
             need_block_nums = (length + self.config.max_length + self.pre_cache_length + self.block_size - 1) // self.block_size
             # print("self.free_list",  self.free_list)
+            bi_now_numpy = np.zeros(shape=[1, self.pre_max_block_num], dtype="int32")
             for bi in range(need_block_nums):
                 bi_now = self.free_list.pop()
                 self.used_list[i].append(bi_now)
-                self.inputs["block_tables"][i : i + 1, bi] = bi_now
+                # self.inputs["block_tables"][i : i + 1, bi] = bi_now
+                bi_now_numpy[:, bi] = bi_now
+            atb_set_value(self.inputs["block_tables"], paddle.to_tensor(bi_now_numpy), [i, 0], [i + 1, self.pre_max_block_num])
 
             # encoder_block_num = len(task['block_tables'])
             self.inputs['encoder_block_lens'][i:i+1] = need_block_nums
